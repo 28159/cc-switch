@@ -63,7 +63,9 @@ describe("ProviderActions Pi provider switching", () => {
       />,
     );
 
-    expect(screen.queryByTitle("provider.duplicate")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.duplicate" }),
+    ).not.toBeInTheDocument();
   });
 
   it("enables a provider that is not in Pi", async () => {
@@ -104,7 +106,10 @@ describe("ProviderActions Pi provider switching", () => {
     expect(
       screen.queryByRole("button", { name: "当前默认" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "common.delete" })).toBeEnabled();
+    // 删除操作在右键菜单中（组件直接渲染），可用
+    expect(
+      screen.getByRole("button", { name: "common.delete" }),
+    ).toBeEnabled();
   });
 
   it("fails closed while Pi's authoritative state is unavailable", async () => {
@@ -122,7 +127,6 @@ describe("ProviderActions Pi provider switching", () => {
     expect(deleteButton).toBeDisabled();
     expect(editButton).toBeEnabled();
 
-    await user.click(enableButton);
     await user.click(editButton);
     await user.click(deleteButton);
     expect(onSwitch).not.toHaveBeenCalled();

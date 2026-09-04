@@ -237,8 +237,11 @@
     "route": {
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
-        "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
+        "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}",
+        "unknown": "正在取得路由狀態…點擊圖示可重新整理"
       },
+      "refresh": "重新整理路由狀態",
+      "statusRefreshed": "已重新整理路由狀態",
       "stopBlockedByTakeover": "其他應用正在使用代理接管。請先在設定中關閉對應應用接管，再停止本機路由。"
     }
   },
@@ -442,7 +445,52 @@
           "info": "一般操作資訊（預設）",
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
-        }
+        },
+        "keepCount": "日誌保留份數",
+        "keepCountDescription": "路由請求日誌最多保留的份數（預設 600），超出自動刪除最舊的",
+        "logsTitle": "路由請求日誌",
+        "logsDescription": "查看本地路由代理處理的請求記錄（需啟用上方日誌開關）",
+        "logsEmpty": "暫無路由日誌",
+        "logsEmptyHint": "啟動路由服務並產生請求後，日誌會出現在這裡",
+        "refresh": "重新整理",
+        "openFolder": "開啟日誌目錄",
+        "clearAll": "清空日誌",
+        "clearAllConfirmTitle": "清空路由日誌",
+        "clearAllConfirmMessage": "確認清空全部路由日誌檔案？此操作無法復原。",
+        "view": "檢視",
+        "delete": "刪除",
+        "viewerTitle": "日誌內容：{{filename}}",
+        "viewerDescription": "最多顯示最新 1MB 內容（檔案超出時截取尾部）",
+        "fileCount": "共 {{count}} 份日誌",
+        "loadFailed": "載入路由日誌失敗",
+        "deleteSuccess": "已刪除日誌 {{filename}}",
+        "deleteFailed": "刪除日誌失敗",
+        "clearedSuccess": "路由日誌已清空",
+        "clearFailed": "清空日誌失敗"
+      },
+      "frpc": {
+        "title": "frpc 遠端存取",
+        "description": "透過 frp 用戶端把本服務暴露到公網，讓手機等裝置遠端存取並控制",
+        "running": "frpc 執行中",
+        "stopped": "frpc 已停止",
+        "notInstalled": "未偵測到 frpc",
+        "start": "啟動",
+        "stop": "停止",
+        "accessUrl": "手機存取位址",
+        "noAccessUrl": "設定伺服器位址並選擇子網域或遠端連接埠後，這裡會顯示手機存取位址。",
+        "hostHint": "需要 web 服務監聽 0.0.0.0 才能被轉發：啟動時使用 `pnpm preview --host 0.0.0.0`（或設定 VITE_HOST=0.0.0.0）。",
+        "accessUrlToast": "遠端存取位址：{{url}}",
+        "copied": "存取位址已複製",
+        "serverAddr": "伺服器位址",
+        "serverPort": "伺服器連接埠",
+        "token": "認證 Token",
+        "tokenPlaceholder": "留空表示無認證",
+        "subdomain": "子網域（http 模式）",
+        "remotePort": "遠端連接埠（tcp 模式）",
+        "localPort": "本機連接埠",
+        "executablePath": "frpc 可執行檔路徑（可選）",
+        "save": "儲存並產生設定",
+        "executableFound": "已偵測到 frpc：{{path}}"
       }
     },
     "language": "介面語言",
@@ -745,6 +793,11 @@
       "title": "首選終端機",
       "description": "選擇點擊終端機按鈕時使用的終端機應用程式",
       "fallbackHint": "如果選擇的終端機不可用，將自動使用系統預設終端機",
+      "launchTemplates": {
+        "title": "啟動參數範本",
+        "description": "新建終端機時自動預填的啟動參數（附加在工具名稱之後）。可包含 --model、--verbose 等；選擇「最近工作階段」時會自動附加 --resume/--session。",
+        "placeholder": "例如 --model sonnet --verbose"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -2755,6 +2808,37 @@
     "preview": "預覽",
     "clickToChange": "點擊更換圖示",
     "clickToSelect": "點擊選擇圖示"
+  },
+  "webDirectoryPicker": {
+    "title": "選擇目錄",
+    "description": "瀏覽器無法取得資料夾的完整路徑，請透過輸入框填寫或貼上路徑後確認。",
+    "pathPlaceholder": "輸入目錄路徑，如 C:\\Users\\you\\.claude",
+    "browse": "瀏覽目錄",
+    "hint": "使用「瀏覽目錄」可在系統中選擇資料夾並自動填入目錄名稱，請補全為完整路徑。",
+    "picked": "已選擇目錄「{{name}}」，瀏覽器無法取得完整路徑，請在上方確認或補全。",
+    "pickFailed": "無法開啟系統目錄選擇器"
+  },
+  "mobile": {
+    "statusChecking": "偵測中…",
+    "statusRunning": "路由執行中",
+    "statusStopped": "路由已停止",
+    "refreshProjects": "重新整理專案",
+    "desktopMode": "桌面版",
+    "selectProject": "選擇專案",
+    "projectCount": "{{count}} 個專案",
+    "searchProject": "搜尋專案…",
+    "noProjects": "伺服器上未掃描到專案",
+    "noProjectsHint": "專案需位於常用開發目錄（projects / workspace / code / dev / git / Documents）或包含 .git / package.json 等標記。",
+    "projectsLoadFailed": "載入專案清單失敗",
+    "switchProvider": "切換供應商",
+    "noSuppliers": "此專案沒有可用的供應商",
+    "noSuppliersForApp": "此應用下沒有供應商",
+    "bound": "目前",
+    "use": "使用",
+    "switchSuccess": "供應商已切換",
+    "switchFailed": "切換失敗：{{detail}}",
+    "suppliersLoadFailed": "載入供應商失敗",
+    "pickProjectFirst": "請先選擇專案，再切換供應商"
   },
   "migration": {
     "success": "設定遷移成功",

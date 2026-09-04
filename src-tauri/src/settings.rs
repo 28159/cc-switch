@@ -460,6 +460,14 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
 
+    // ===== 终端工作台（三栏式主界面）=====
+    /// 终端实例与最近项目目录（terminal_workbench 模块读写）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_hub: Option<serde_json::Value>,
+    /// 开发项目列表（多工具绑定 + 快照）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projects: Option<serde_json::Value>,
+
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
@@ -567,6 +575,8 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            terminal_hub: None,
+            projects: None,
         }
     }
 }
@@ -788,7 +798,7 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     Ok(())
 }
 
-fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+pub(crate) fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {

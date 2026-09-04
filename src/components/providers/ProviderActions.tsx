@@ -1,27 +1,19 @@
-import {
+﻿import {
   Activity,
   BarChart3,
   Check,
-  ChevronDown,
   Copy,
   Edit,
   Loader2,
   Minus,
   Play,
   Plus,
+  RefreshCw,
   Terminal,
   Trash2,
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { AppId } from "@/lib/api";
 import { isAdditiveAppId } from "@/config/appConfig";
@@ -43,6 +35,8 @@ interface ProviderActionsProps {
   onDuplicate?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
+  /** 刷新用量统计（卡片内联用量已精简，刷新入口收进菜单） */
+  onRefreshUsage?: () => void;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -61,10 +55,7 @@ interface ProviderActionsProps {
   onSetAsDefault?: (modelId?: string) => void;
 }
 
-// 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
-// 因 Button 基类带 disabled:pointer-events-none，title 必须挂在外层非禁用
-// 的 wrapper 上才会在 hover 时显示（见下方 <span> 包裹）。
-interface MainButtonState {
+interface MenuItemState {
   disabled: boolean;
   variant: "default" | "secondary";
   className: string;
@@ -78,13 +69,13 @@ export function ProviderActions({
   isCurrent,
   isInConfig = false,
   isTesting,
-  isProxyTakeover = false,
   isOmo = false,
   onSwitch,
   onEdit,
   onDuplicate,
   onTest,
   onConfigureUsage,
+  onRefreshUsage,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
@@ -94,7 +85,6 @@ export function ProviderActions({
   onToggleFailover,
   isOfficialBlockedByProxy = false,
   isReadOnly = false,
-  // OpenClaw: default model
   isDefaultModel = false,
   isRemovalProtected = false,
   isStateChangeProtected = false,
@@ -102,7 +92,6 @@ export function ProviderActions({
   onSetAsDefault,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
-  const iconButtonClass = "h-8 w-8 p-1";
 
   // Additive provider membership: providers can coexist in the native config.
   const isAdditiveMode =
@@ -115,7 +104,7 @@ export function ProviderActions({
   const isMembershipMode = isAdditiveMode;
   const piStateChangeHint = t("pi.current.stateUnavailableHint");
 
-  const handleMainButtonClick = () => {
+  const handleMainAction = () => {
     if (isOmo) {
       if (isCurrent) {
         onDisableOmo?.();
@@ -140,15 +129,14 @@ export function ProviderActions({
     }
   };
 
-  const getMainButtonState = (): MainButtonState => {
+  const getMainItemState = (): MenuItemState => {
     if (isOmo) {
       if (isCurrent) {
         return {
           disabled: false,
           variant: "secondary" as const,
-          className:
-            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
-          icon: <Check className="h-4 w-4" />,
+          className: "",
+          icon: <Check className="h-3.5 w-3.5" />,
           text: t("provider.inUse"),
         };
       }
@@ -156,7 +144,7 @@ export function ProviderActions({
         disabled: false,
         variant: "default" as const,
         className: "",
-        icon: <Play className="h-4 w-4" />,
+        icon: <Play className="h-3.5 w-3.5" />,
         text: t("provider.enable"),
       };
     }
@@ -167,11 +155,11 @@ export function ProviderActions({
         return {
           disabled: true,
           variant: "secondary" as const,
-          className: "opacity-40 cursor-not-allowed",
+          className: "",
           icon: isInConfig ? (
-            <Minus className="h-4 w-4" />
+            <Minus className="h-3.5 w-3.5" />
           ) : (
-            <Plus className="h-4 w-4" />
+            <Plus className="h-3.5 w-3.5" />
           ),
           text: isInConfig
             ? t("provider.removeFromConfig", { defaultValue: "移除" })
@@ -183,20 +171,21 @@ export function ProviderActions({
         return {
           disabled: isRemovalProtected,
           variant: "secondary" as const,
-          className: cn(
-            "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
-            isRemovalProtected && "opacity-40 cursor-not-allowed",
-          ),
-          icon: <Minus className="h-4 w-4" />,
+          className: "",
+          icon: <Minus className="h-3.5 w-3.5" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
+          title: isRemovalProtected
+            ? t("provider.removalProtectedHint", {
+                defaultValue: "当前默认模型，不能移除",
+              })
+            : undefined,
         };
       }
       return {
         disabled: false,
         variant: "default" as const,
-        className:
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
-        icon: <Plus className="h-4 w-4" />,
+        className: "",
+        icon: <Plus className="h-3.5 w-3.5" />,
         text:
           appId === "pi"
             ? t("provider.enable", { defaultValue: "启用" })
@@ -209,18 +198,16 @@ export function ProviderActions({
         return {
           disabled: false,
           variant: "secondary" as const,
-          className:
-            "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
-          icon: <Check className="h-4 w-4" />,
+          className: "",
+          icon: <Check className="h-3.5 w-3.5" />,
           text: t("failover.inQueue", { defaultValue: "已加入" }),
         };
       }
       return {
         disabled: false,
         variant: "default" as const,
-        className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-        icon: <Plus className="h-4 w-4" />,
+        className: "",
+        icon: <Plus className="h-3.5 w-3.5" />,
         text: t("failover.addQueue", { defaultValue: "加入" }),
       };
     }
@@ -229,9 +216,8 @@ export function ProviderActions({
       return {
         disabled: true,
         variant: "secondary" as const,
-        className:
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
-        icon: <Check className="h-4 w-4" />,
+        className: "",
+        icon: <Check className="h-3.5 w-3.5" />,
         text: t("provider.inUse"),
       };
     }
@@ -241,7 +227,7 @@ export function ProviderActions({
         disabled: true,
         variant: "default" as const,
         className: "",
-        icon: <Play className="h-4 w-4" />,
+        icon: <Play className="h-3.5 w-3.5" />,
         text: t("provider.enable"),
         title: t("provider.blockedByProxyHint"),
       };
@@ -250,15 +236,13 @@ export function ProviderActions({
     return {
       disabled: false,
       variant: "default" as const,
-      className: isProxyTakeover
-        ? "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-        : "",
-      icon: <Play className="h-4 w-4" />,
+      className: "",
+      icon: <Play className="h-3.5 w-3.5" />,
       text: t("provider.enable"),
     };
   };
 
-  const buttonState = getMainButtonState();
+  const mainState = getMainItemState();
   const canDelete =
     !isReadOnly &&
     (appId === "pi"
@@ -277,204 +261,154 @@ export function ProviderActions({
         : t("common.delete");
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex min-w-48 flex-col gap-0.5 py-1.5">
+      {/* 主动作：启用 / 切换 / 移除 / 加入故障转移 / 停用 OMO */}
+      <button
+        type="button"
+        onClick={mainState.disabled ? undefined : handleMainAction}
+        disabled={mainState.disabled}
+        title={mainState.title}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs font-medium text-zinc-100",
+          mainState.disabled
+            ? "cursor-not-allowed opacity-40"
+            : "hover:bg-blue-600/30 hover:text-blue-100",
+        )}
+      >
+        {mainState.icon}
+        {mainState.text}
+      </button>
+
+      {isDefaultModel && (
+        <div className="flex items-center gap-2 px-3 py-1 text-[10px] text-emerald-400/80">
+          <Check className="h-3 w-3" />
+          {t("provider.isDefault", { defaultValue: "当前默认" })}
+        </div>
+      )}
+
       {(appId === "openclaw" || appId === "hermes") &&
         isInConfig &&
         onSetAsDefault &&
-        (() => {
-          const activeLabel =
-            appId === "hermes"
-              ? t("provider.inUse", { defaultValue: "已在用" })
-              : t("provider.isDefault", { defaultValue: "当前默认" });
-          const inactiveLabel =
-            appId === "hermes"
+        !isDefaultModel && (
+          <button
+            type="button"
+            onClick={() => onSetAsDefault(defaultModelOptions[0]?.id)}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            {appId === "hermes"
               ? t("provider.enable", { defaultValue: "启用" })
-              : t("provider.setAsDefault", { defaultValue: "设为默认" });
-          const defaultButtonClassName = cn(
-            "w-fit px-2.5",
-            isDefaultModel
-              ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
-              : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-          );
+              : t("provider.setAsDefault", { defaultValue: "设为默认" })}
+          </button>
+        )}
 
-          if (
-            appId === "openclaw" &&
-            !isDefaultModel &&
-            defaultModelOptions.length > 1
-          ) {
-            return (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className={defaultButtonClassName}
-                  >
-                    <Zap className="h-4 w-4" />
-                    {inactiveLabel}
-                    <ChevronDown className="h-3.5 w-3.5 opacity-70" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  className="max-h-72 min-w-64 overflow-y-auto"
-                >
-                  <DropdownMenuLabel>
-                    {t("openclaw.selectDefaultModel", {
-                      defaultValue: "选择默认模型",
-                    })}
-                  </DropdownMenuLabel>
-                  {defaultModelOptions.map((model) => (
-                    <DropdownMenuItem
-                      key={model.id}
-                      onSelect={() => onSetAsDefault(model.id)}
-                      className="flex min-w-0 flex-col items-start gap-0.5"
-                    >
-                      <span className="max-w-72 truncate">
-                        {model.name?.trim() || model.id}
-                      </span>
-                      {model.name?.trim() && model.name.trim() !== model.id && (
-                        <span className="max-w-72 truncate font-mono text-xs text-muted-foreground">
-                          {model.id}
-                        </span>
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            );
-          }
+      <div className="mx-3 my-1 h-px bg-zinc-800" />
 
-          return (
-            <Button
-              size="sm"
-              variant={isDefaultModel ? "secondary" : "default"}
-              onClick={
-                isDefaultModel
-                  ? undefined
-                  : () => onSetAsDefault(defaultModelOptions[0]?.id)
-              }
-              disabled={isDefaultModel}
-              className={defaultButtonClassName}
-            >
-              <Zap className="h-4 w-4" />
-              {isDefaultModel ? activeLabel : inactiveLabel}
-            </Button>
-          );
-        })()}
-
-      {/* disabled:pointer-events-none prevents the native title from firing,
-          so the wrapper owns the explanatory tooltip and cursor. */}
-      <span
-        title={buttonState.title}
+      <button
+        type="button"
+        onClick={isReadOnly ? undefined : onEdit}
+        disabled={isReadOnly}
+        title={isReadOnly ? readOnlyHint : undefined}
         className={cn(
-          "inline-flex",
-          buttonState.disabled && "cursor-not-allowed",
+          "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800",
+          isReadOnly && "cursor-not-allowed opacity-40",
         )}
       >
-        <Button
-          size="sm"
-          variant={buttonState.variant}
-          onClick={handleMainButtonClick}
-          disabled={buttonState.disabled}
-          className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+        <Edit className="h-3.5 w-3.5" />
+        {t("common.edit")}
+      </button>
+
+      {onDuplicate && (
+        <button
+          type="button"
+          onClick={onDuplicate}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
         >
-          {buttonState.icon}
-          {buttonState.text}
-        </Button>
-      </span>
+          <Copy className="h-3.5 w-3.5" />
+          {t("provider.duplicate")}
+        </button>
+      )}
 
-      <div className="flex items-center gap-1">
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={isReadOnly ? undefined : onEdit}
-          disabled={isReadOnly}
-          aria-label={t("common.edit")}
-          title={isReadOnly ? readOnlyHint : t("common.edit")}
-          className={cn(
-            iconButtonClass,
-            isReadOnly && "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          <Edit className="h-4 w-4" />
-        </Button>
-
-        {onDuplicate && (
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onDuplicate}
-            title={t("provider.duplicate")}
-            className={iconButtonClass}
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
-        )}
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onTest || undefined}
+      {onTest && (
+        <button
+          type="button"
+          onClick={onTest}
           disabled={isTesting}
-          title={t("provider.connectivityCheck", "检测连通")}
           className={cn(
-            iconButtonClass,
-            !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
+            "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800",
+            isTesting && "cursor-not-allowed opacity-40",
           )}
         >
           {isTesting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
-            <Activity className="h-4 w-4" />
+            <Activity className="h-3.5 w-3.5" />
           )}
-        </Button>
+          {t("provider.connectivityCheck", "检测连通")}
+        </button>
+      )}
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onConfigureUsage || undefined}
-          title={t("provider.configureUsage")}
-          className={cn(
-            iconButtonClass,
-            !onConfigureUsage &&
-              "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
+      {onConfigureUsage && (
+        <button
+          type="button"
+          onClick={onConfigureUsage}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
         >
-          <BarChart3 className="h-4 w-4" />
-        </Button>
+          <BarChart3 className="h-3.5 w-3.5" />
+          {t("provider.configureUsage")}
+        </button>
+      )}
 
-        {onOpenTerminal && (
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onOpenTerminal}
-            title={t("provider.openTerminal", "打开终端")}
-            className={cn(
-              iconButtonClass,
-              "hover:text-emerald-600 dark:hover:text-emerald-400",
-            )}
-          >
-            <Terminal className="h-4 w-4" />
-          </Button>
+      {onRefreshUsage && (
+        <button
+          type="button"
+          onClick={onRefreshUsage}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          {t("usage.refreshUsage", { defaultValue: "刷新用量" })}
+        </button>
+      )}
+
+      {onOpenTerminal && (
+        <button
+          type="button"
+          onClick={onOpenTerminal}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+        >
+          <Terminal className="h-3.5 w-3.5" />
+          {t("provider.openTerminal", "打开终端")}
+        </button>
+      )}
+
+      {onRemoveFromConfig && !(isMembershipMode && isInConfig) && (
+        <button
+          type="button"
+          onClick={onRemoveFromConfig}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+        >
+          <Minus className="h-3.5 w-3.5" />
+          {t("provider.removeFromConfig", { defaultValue: "移除" })}
+        </button>
+      )}
+
+      <div className="mx-3 my-1 h-px bg-zinc-800" />
+
+      <button
+        type="button"
+        onClick={canDelete ? onDelete : undefined}
+        disabled={!canDelete}
+        title={deleteHint}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs",
+          canDelete
+            ? "text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            : "cursor-not-allowed opacity-40 text-zinc-500",
         )}
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={canDelete ? onDelete : undefined}
-          disabled={!canDelete}
-          aria-label={t("common.delete")}
-          title={deleteHint}
-          className={cn(
-            iconButtonClass,
-            canDelete && "hover:text-red-500 dark:hover:text-red-400",
-            !canDelete && "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        {t("common.delete")}
+      </button>
     </div>
   );
 }

@@ -2786,6 +2786,9 @@ async fn log_usage(
     status_code: u16,
     session_id: Option<String>,
 ) {
+    // 实时速率采样
+    super::usage::rate::record_output(&usage);
+
     use super::usage::logger::UsageLogger;
 
     if !usage_logging_enabled(state) {

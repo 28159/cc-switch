@@ -43,6 +43,15 @@ fn get_proxy_port() -> u16 {
         .unwrap_or(15721) // 默认端口作为回退
 }
 
+/// 供其它模块读取代理端口；未启动时返回 0。
+pub fn proxy_port() -> u16 {
+    CC_SWITCH_PROXY_PORT
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|port| *port)
+        .unwrap_or(0)
+}
+
 /// 初始化全局 HTTP 客户端
 ///
 /// 应在应用启动时调用一次。

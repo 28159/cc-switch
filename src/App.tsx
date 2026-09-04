@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
+import { info as writeInfoLog } from "@tauri-apps/plugin-log";
 import {
   Plus,
   Settings,
@@ -27,8 +28,9 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
+  PictureInPicture2,
 } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
@@ -91,6 +93,7 @@ import UnifiedSkillsPanel, {
 } from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
+import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
@@ -173,9 +176,126 @@ const getInitialView = (): View => {
   return "providers";
 };
 
+/** HUD 独立小窗（?hud=1）：精简显示「项目树 + 终端列表 | 终端」，无顶栏与模型栏。 */
+const HUD_WINDOW_WIDTH = 720;
+const HUD_WINDOW_HEIGHT = 480;
+
+/** 显示主窗口（位置/大小保持不变）。 */
+async function showMainWindow(): Promise<void> {
+  try {
+    const { getAllWindows } = await import("@tauri-apps/api/window");
+    const main = (await getAllWindows()).find((w) => w.label === "main");
+    if (main) {
+      await main.unminimize();
+      await main.show();
+      await main.setFocus();
+      void writeInfoLog("[HUD] 已显示主窗口（showMainWindow）", {
+        file: "frontend",
+      }).catch(() => undefined);
+    }
+  } catch (error) {
+    console.error("[HudWindow] failed to show main window", error);
+  }
+}
+
+function HudWindow() {
+  const [app] = useState<AppId>(getInitialApp);
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    winX: number;
+    winY: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const handleMouseMove = (event: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      event.preventDefault();
+      void win
+        .setPosition(
+          new PhysicalPosition(
+            drag.winX + event.screenX - drag.startX,
+            drag.winY + event.screenY - drag.startY,
+          ),
+        )
+        .catch(() => undefined);
+    };
+    const handleMouseUp = () => {
+      dragRef.current = null;
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  const handleHeaderDragStart = (event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const win = getCurrentWindow();
+    void win
+      .outerPosition()
+      .then((pos) => {
+        dragRef.current = {
+          startX: event.screenX,
+          startY: event.screenY,
+          winX: pos.x,
+          winY: pos.y,
+        };
+      })
+      .catch(() => undefined);
+  };
+
+  // 关闭 HUD（任意方式）时自动显示主窗口，保证二者互斥。
+  // 注意：这里只显示主窗口、不调用 hud.close()，避免在 onCloseRequested
+  // 回调内再次关闭自身造成递归崩溃（曾导致 HUD 闪退且无法重建）。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      try {
+        const win = getCurrentWindow();
+        unlisten = await win.onCloseRequested(() => {
+          void writeInfoLog("[HUD] 前端收到 onCloseRequested → 显示主窗口", {
+            file: "frontend",
+          }).catch(() => undefined);
+          void showMainWindow();
+        });
+      } catch (error) {
+        console.error("[HudWindow] failed to watch close", error);
+      }
+    };
+    void setup();
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  return (
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <TerminalPanel
+        activeApp={app}
+        compact
+        hudDraggable
+        selectOnly
+        onHeaderDragStart={handleHeaderDragStart}
+      />
+    </div>
+  );
+}
+
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+
+  // HUD 独立小窗模式：URL 带 ?hud=1（由 openHudWindow 打开的 Tauri 子窗口）
+  const isHudWindow = useMemo(
+    () => new URLSearchParams(window.location.search).get("hud") === "1",
+    [],
+  );
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp: AppId =
@@ -305,8 +425,9 @@ function App() {
       currentView === "openclawEnv" ||
       currentView === "openclawTools" ||
       currentView === "openclawAgents");
-  const { data: openclawHealthWarnings = [] } =
-    useOpenClawHealth(isOpenClawView);
+  const { data: openclawHealthData } = useOpenClawHealth(isOpenClawView);
+  // 后端未实现/返回 null 时兜底为空数组，避免渲染崩溃
+  const openclawHealthWarnings = openclawHealthData ?? [];
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
@@ -690,6 +811,74 @@ function App() {
   const openHermesWebUI = useOpenHermesWebUI(() =>
     setLaunchDashboardOpen(true),
   );
+
+  /** HUD 独立小窗：屏幕右下角精简终端窗口，主窗口最小化后仍可独立使用。 */
+  const openHudWindow = () => {
+    void writeInfoLog("[HUD] 请求打开 HUD 窗口", { file: "frontend" }).catch(
+      () => undefined,
+    );
+    void (async () => {
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        // 残留的 HUD 窗口句柄：仅当窗口真实可见时聚焦；否则（已销毁/隐藏残留）复用显示
+        const existing = await WebviewWindow.getByLabel("cc-switch-hud");
+        if (existing) {
+          const visible = await existing.isVisible().catch(() => false);
+          if (visible) {
+            void existing.setFocus().catch(() => undefined);
+            void existing.setAlwaysOnTop(true).catch(() => undefined);
+            return;
+          }
+          // 窗口已隐藏（关闭仅隐藏不销毁）：直接复用显示。
+          // 不要 close() 重建，避免窗口拖动/关闭期间销毁触发 tao 状态机崩溃。
+          const shown = await existing
+            .show()
+            .then(() => true)
+            .catch(() => false);
+          if (shown) {
+            void existing.setAlwaysOnTop(true).catch(() => undefined);
+            void existing.setFocus().catch(() => undefined);
+            void getCurrentWindow()
+              .hide()
+              .catch(() => undefined);
+            return;
+          }
+        }
+        const width = HUD_WINDOW_WIDTH;
+        const height = HUD_WINDOW_HEIGHT;
+        const left = Math.max(0, window.screen.availWidth - width - 24);
+        const top = Math.max(0, window.screen.availHeight - height - 24);
+        const hud = new WebviewWindow("cc-switch-hud", {
+          url: "index.html?hud=1",
+          title: "cc-switch HUD",
+          width,
+          height,
+          x: left,
+          y: top,
+          resizable: true,
+          alwaysOnTop: true,
+        });
+        hud.once("tauri://created", () => {
+          // 创建后再显式置顶一次，确保 alwaysOnTop 生效
+          void hud
+            .setAlwaysOnTop(true)
+            .then(() => hud.setFocus())
+            .catch(() => undefined);
+          // 进入 HUD 模式：自动隐藏大窗口
+          void getCurrentWindow()
+            .hide()
+            .catch(() => undefined);
+        });
+        hud.once("tauri://error", (error) => {
+          console.error("[App] failed to create HUD window", error);
+          // 创建失败（如权限/残留）时确保主窗口可见，避免被困在隐藏状态
+          void showMainWindow();
+        });
+      } catch (error) {
+        console.error("[App] failed to open HUD window", error);
+      }
+    })();
+  };
 
   const handleOpenWebsite = async (url: string) => {
     try {
@@ -1088,76 +1277,7 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         default:
-          return (
-            <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={activeApp}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="space-y-4"
-                  >
-                    <ProviderList
-                      providers={providers}
-                      currentProviderId={currentProviderId}
-                      appId={activeApp}
-                      isLoading={isLoading}
-                      isProxyRunning={currentAppUsesProxy && isProxyRunning}
-                      isProxyTakeover={
-                        isProxyRunning && isCurrentAppTakeoverActive
-                      }
-                      activeProviderId={activeProviderId}
-                      onSwitch={
-                        activeApp === "pi"
-                          ? handleEnablePiProvider
-                          : switchProvider
-                      }
-                      onEdit={(provider) => {
-                        setEditingProvider(provider);
-                      }}
-                      onDelete={(provider) =>
-                        setConfirmAction({ provider, action: "delete" })
-                      }
-                      onRemoveFromConfig={
-                        activeApp === "opencode" ||
-                        activeApp === "openclaw" ||
-                        activeApp === "hermes" ||
-                        activeApp === "pi"
-                          ? (provider) =>
-                              setConfirmAction({ provider, action: "remove" })
-                          : undefined
-                      }
-                      onDisableOmo={
-                        activeApp === "opencode" ? handleDisableOmo : undefined
-                      }
-                      onDisableOmoSlim={
-                        activeApp === "opencode"
-                          ? handleDisableOmoSlim
-                          : undefined
-                      }
-                      onDuplicate={handleDuplicateProvider}
-                      onConfigureUsage={setUsageProvider}
-                      onOpenWebsite={handleOpenWebsite}
-                      onOpenTerminal={
-                        activeApp === "claude" ? handleOpenTerminal : undefined
-                      }
-                      onCreate={() => setIsAddOpen(true)}
-                      onSetAsDefault={
-                        activeApp === "openclaw"
-                          ? setAsDefaultModel
-                          : activeApp === "hermes"
-                            ? switchProvider
-                            : undefined
-                      }
-                    />
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-            </div>
-          );
+          return null;
       }
     })();
 
@@ -1176,6 +1296,57 @@ function App() {
       </AnimatePresence>
     );
   };
+
+  /** 三栏布局右侧栏：模型列表（供应商列表） */
+  const renderRightPanel = () => (
+    <div className="flex h-full w-full flex-col bg-background">
+      <ProviderList
+        providers={providers}
+        currentProviderId={currentProviderId}
+        appId={activeApp}
+        isLoading={isLoading}
+        isProxyRunning={currentAppUsesProxy && isProxyRunning}
+        isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+        activeProviderId={activeProviderId}
+        onSwitch={activeApp === "pi" ? handleEnablePiProvider : switchProvider}
+        onEdit={(provider) => {
+          setEditingProvider(provider);
+        }}
+        onDelete={(provider) =>
+          setConfirmAction({ provider, action: "delete" })
+        }
+        onRemoveFromConfig={
+          activeApp === "opencode" ||
+          activeApp === "openclaw" ||
+          activeApp === "hermes" ||
+          activeApp === "pi"
+            ? (provider) => setConfirmAction({ provider, action: "remove" })
+            : undefined
+        }
+        onDisableOmo={activeApp === "opencode" ? handleDisableOmo : undefined}
+        onDisableOmoSlim={
+          activeApp === "opencode" ? handleDisableOmoSlim : undefined
+        }
+        onDuplicate={handleDuplicateProvider}
+        onConfigureUsage={setUsageProvider}
+        onOpenWebsite={handleOpenWebsite}
+        onOpenTerminal={activeApp === "claude" ? handleOpenTerminal : undefined}
+        onCreate={() => setIsAddOpen(true)}
+        onSetAsDefault={
+          activeApp === "openclaw"
+            ? setAsDefaultModel
+            : activeApp === "hermes"
+              ? switchProvider
+              : undefined
+        }
+      />
+    </div>
+  );
+
+  // HUD 独立小窗页面（?hud=1）：仅渲染精简终端工作台
+  if (isHudWindow) {
+    return <HudWindow />;
+  }
 
   return (
     <div
@@ -1364,6 +1535,18 @@ function App() {
                     <BarChart2 className="w-4 h-4" />
                   </Button>
                 )}
+                {/* HUD 悬浮小窗（屏幕右下角精简终端，主窗口最小化仍可用） */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void openHudWindow()}
+                  title={t("hud.open", {
+                    defaultValue: "HUD 悬浮终端（屏幕右下角）",
+                  })}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <PictureInPicture2 className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>
@@ -1745,11 +1928,22 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
         )}
-        {renderContent()}
+        {currentView === "providers" ? (
+          <div className="flex-1 min-h-0 flex flex-col">
+            <TerminalPanel
+              activeApp={activeApp}
+              rightPanel={renderRightPanel()}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden animate-fade-in">
+            {renderContent()}
+          </div>
+        )}
       </main>
 
       <AddProviderDialog

@@ -1,10 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
-import {
-  AlertTriangle,
-  GripVertical,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { AlertTriangle, GripVertical } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import type {
@@ -17,19 +12,11 @@ import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
-import UsageFooter from "@/components/UsageFooter";
-import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
-import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
-import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
-import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
-import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
+import { TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
-import {
-  extractCodexBaseUrl,
-  extractCodexExperimentalBearerToken,
-} from "@/utils/providerConfigUtils";
+import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   resolveCodexOfficialIdentity,
@@ -70,6 +57,8 @@ interface ProviderCardProps {
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
+  /** 点击卡片：在模型列表顶部显示该模型的用量（3 秒后回退当前模型） */
+  onShowUsage?: (providerId: string) => void;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
@@ -117,54 +106,6 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   return false;
 }
 
-const extractApiUrl = (provider: Provider, fallbackText: string) => {
-  if (provider.notes?.trim()) {
-    return provider.notes.trim();
-  }
-
-  if (provider.websiteUrl) {
-    return provider.websiteUrl;
-  }
-
-  const config = provider.settingsConfig;
-
-  if (config && typeof config === "object") {
-    const object = config as Record<string, any>;
-    const envBase =
-      object?.env?.ANTHROPIC_BASE_URL || object?.env?.GOOGLE_GEMINI_BASE_URL;
-    if (typeof envBase === "string" && envBase.trim()) {
-      return envBase;
-    }
-
-    const directBaseUrl =
-      object.baseUrl ||
-      object.base_url ||
-      object.options?.baseURL ||
-      (Array.isArray(object.models)
-        ? object.models.find(
-            (model: unknown) =>
-              model &&
-              typeof model === "object" &&
-              typeof (model as Record<string, unknown>).baseUrl === "string",
-          )?.baseUrl
-        : undefined);
-    if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
-      return directBaseUrl;
-    }
-
-    const baseUrl = object.config;
-
-    if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
-      const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
-      if (extractedBaseUrl) {
-        return extractedBaseUrl;
-      }
-    }
-  }
-
-  return fallbackText;
-};
-
 export function ProviderCard({
   provider,
   isCurrent,
@@ -179,10 +120,10 @@ export function ProviderCard({
   onDisableOmo,
   onDisableOmoSlim,
   onConfigureUsage,
-  onOpenWebsite,
   onDuplicate,
   onTest,
   onOpenTerminal,
+  onShowUsage,
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
@@ -238,14 +179,6 @@ export function ProviderCard({
     isProxyAppId(appId),
   );
 
-  const fallbackUrlText = t("provider.notConfigured", {
-    defaultValue: "未配置接口地址",
-  });
-
-  const displayUrl = useMemo(() => {
-    return extractApiUrl(provider, fallbackUrlText);
-  }, [provider, fallbackUrlText]);
-
   const openclawDefaultModelOptions = useMemo(() => {
     if (appId !== "openclaw") return [];
     const config = provider.settingsConfig as OpenClawProviderConfig;
@@ -254,16 +187,6 @@ export function ProviderCard({
       .filter((model) => typeof model.id === "string" && model.id.trim())
       .map((model) => ({ id: model.id, name: model.name }));
   }, [appId, provider.settingsConfig]);
-
-  const isClickableUrl = useMemo(() => {
-    if (provider.notes?.trim()) {
-      return false;
-    }
-    if (displayUrl === fallbackUrlText) {
-      return false;
-    }
-    return true;
-  }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
   const usageEnabled =
@@ -274,8 +197,6 @@ export function ProviderCard({
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
-  const officialSubscriptionEnabled =
-    supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
   // 官方判定只认显式 category === "official"（SSOT），不回退 isOfficial 的空字段启发式。
   // 理由（此判定曾在「纯 category ↔ category+isOfficial 回退」间反复，结论钉死于此）：
   //  1) 封号保护是高代价决策，不该建立在「base_url/key 缺失」这种脆弱信号上——它无法区分
@@ -292,54 +213,28 @@ export function ProviderCard({
     isProxyTakeover &&
     provider.category === "official" &&
     !supportsOfficialRouting;
-  const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
   // Hermes v12+ overlay entries live under the `providers:` dict and are
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
-  const isCodexOauth =
-    appId === "codex"
-      ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
-  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
-  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
   // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
   const codexNeedsRouting =
     appId === "codex" && providerNeedsRouting(appId, provider);
-  // 获取用量数据以判断是否有多套餐
-  // 累加模式应用：使用 isInConfig 代替 isCurrent
+  // 用量查询仅服务于右键菜单「刷新用量」（卡片本身不展示用量）
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
 
-  const { data: usage } = useUsageQuery(provider.id, appId, {
-    enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
-    autoQueryInterval,
-  });
-
-  const isTokenPlan =
-    provider.meta?.usage_script?.templateType === "token_plan";
-  const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
-
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  useEffect(() => {
-    if (hasMultiplePlans) {
-      setIsExpanded(true);
-    }
-  }, [hasMultiplePlans]);
-
-  const handleOpenWebsite = () => {
-    if (!isClickableUrl) {
-      return;
-    }
-    onOpenWebsite(displayUrl);
-  };
+  const { refetch: refetchUsage } = useUsageQuery(
+    provider.id,
+    appId,
+    {
+      enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
+      autoQueryInterval,
+    },
+  );
 
   // 判断是否是"当前使用中"的供应商
   // - OMO/OMO Slim 供应商：使用 isCurrent
@@ -366,11 +261,42 @@ export function ProviderCard({
       (isActiveProvider || hasPersistentConfigHighlight));
   const hasStateHighlight = shouldUseGreen || shouldUseBlue;
 
+  // 右键菜单：在鼠标位置弹出操作菜单（自绘，避免依赖全局容器）
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const handleContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    const menuWidth = 200;
+    const menuHeight = 320;
+    setCtxMenu({
+      x: Math.min(event.clientX, window.innerWidth - menuWidth - 8),
+      y: Math.min(event.clientY, window.innerHeight - menuHeight - 8),
+    });
+  };
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCtxMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+    };
+  }, [ctxMenu]);
+
   return (
     <div
+      onContextMenu={handleContextMenu}
+      onClick={onShowUsage ? () => onShowUsage(provider.id) : undefined}
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
-        "bg-card text-card-foreground group",
+        "relative overflow-hidden rounded-xl border border-border p-2.5 transition-all duration-300",
+        "bg-card text-card-foreground group cursor-pointer",
         isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
@@ -391,13 +317,13 @@ export function ProviderCard({
           hasStateHighlight ? "opacity-100" : "opacity-0",
         )}
       />
-      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {dragHandleProps && (
             <button
               type="button"
               className={cn(
-                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+                "-ml-1 flex-shrink-0 cursor-grab active:cursor-grabbing p-1",
                 "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
                 dragHandleProps.isDragging && "cursor-grabbing",
               )}
@@ -405,11 +331,11 @@ export function ProviderCard({
               {...dragHandleProps.attributes}
               {...dragHandleProps.listeners}
             >
-              <GripVertical className="h-4 w-4" />
+              <GripVertical className="h-3.5 w-3.5" />
             </button>
           )}
 
-          <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+          <div className="h-7 w-7 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
               icon={resolveProviderIcon(
                 appId,
@@ -418,18 +344,15 @@ export function ProviderCard({
               )}
               name={provider.name}
               color={provider.iconColor}
-              size={20}
+              size={16}
             />
           </div>
 
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2 min-h-7">
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="flex flex-wrap items-center gap-1.5 min-h-6">
               <h3
-                className={cn(
-                  "text-base font-semibold leading-none",
-                  codexOfficialIdentity && "min-w-0 flex-1 truncate",
-                )}
-                title={codexOfficialIdentity ? provider.name : undefined}
+                className="min-w-0 flex-1 truncate text-sm font-semibold leading-none"
+                title={provider.name}
               >
                 {provider.name}
               </h3>
@@ -513,7 +436,14 @@ export function ProviderCard({
               )}
             </div>
 
-            {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+            {manualNote?.trim() ? (
+              <p
+                className="min-w-0 truncate text-[11px] text-muted-foreground"
+                title={manualNote.trim()}
+              >
+                {manualNote.trim()}
+              </p>
+            ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
               <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
                 {codexOfficialIdentity === "native_login" ? (
                   <span className="min-w-0 truncate" title={manualNote}>
@@ -579,174 +509,73 @@ export function ProviderCard({
                   </span>
                 )}
               </div>
-            ) : displayUrl ? (
-              <button
-                type="button"
-                onClick={handleOpenWebsite}
-                className={cn(
-                  "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
-                  isClickableUrl
-                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
-                    : "text-muted-foreground cursor-default",
-                )}
-                title={displayUrl}
-                disabled={!isClickableUrl}
-              >
-                <span className="min-w-0 truncate">{displayUrl}</span>
-              </button>
             ) : null}
-          </div>
-        </div>
-
-        <div className="flex items-center ml-auto min-w-0 gap-3">
-          <div className="ml-auto">
-            <div className="flex items-center gap-1">
-              {isCopilot ? (
-                <CopilotQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
-              ) : isCodexOauth ? (
-                !isBoundCodexOfficial || usageEnabled ? (
-                  <CodexOauthQuotaFooter
-                    meta={provider.meta}
-                    inline={true}
-                    isCurrent={isCurrent}
-                    autoQueryInterval={
-                      isBoundCodexOfficial
-                        ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
-                        : undefined
-                    }
-                  />
-                ) : null
-              ) : isXaiOauth ? (
-                <XaiOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
-              ) : isOfficial ? (
-                officialSubscriptionEnabled ? (
-                  <SubscriptionQuotaFooter
-                    appId={appId}
-                    inline={true}
-                    isCurrent={isCurrent}
-                    autoQueryInterval={
-                      provider.meta?.usage_script?.autoQueryInterval ?? 0
-                    }
-                  />
-                ) : null
-              ) : hasMultiplePlans ? (
-                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">
-                    {t("usage.multiplePlans", {
-                      count: usage?.data?.length || 0,
-                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
-                    })}
-                  </span>
-                </div>
-              ) : (
-                <UsageFooter
-                  provider={provider}
-                  providerId={provider.id}
-                  appId={appId}
-                  usageEnabled={usageEnabled}
-                  isCurrent={isCurrent}
-                  isInConfig={isInConfig}
-                  inline={true}
-                />
-              )}
-              {hasMultiplePlans && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsExpanded(!isExpanded);
-                  }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
-                  title={
-                    isExpanded
-                      ? t("usage.collapse", { defaultValue: "收起" })
-                      : t("usage.expand", { defaultValue: "展开" })
-                  }
-                >
-                  {isExpanded ? (
-                    <ChevronUp size={14} />
-                  ) : (
-                    <ChevronDown size={14} />
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
-            <ProviderActions
-              appId={appId}
-              isCurrent={isCurrent}
-              isInConfig={isInConfig}
-              isTesting={isTesting}
-              isProxyTakeover={isProxyTakeover}
-              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
-              isReadOnly={isHermesReadOnly}
-              isOmo={isAnyOmo}
-              onSwitch={() => onSwitch(provider)}
-              onEdit={() => onEdit(provider)}
-              onDuplicate={() => onDuplicate(provider)}
-              onTest={
-                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
-                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
-                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
-                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
-                // 官方是原生 1P 模式，根本不在请求路径上）。
-                onTest && provider.category !== "official"
-                  ? () => onTest(provider)
-                  : undefined
-              }
-              onConfigureUsage={
-                (isOfficial && !supportsOfficialSubscription) ||
-                isCopilot ||
-                (isCodexOauth && !isBoundCodexOfficial) ||
-                isXaiOauth
-                  ? undefined
-                  : () => onConfigureUsage(provider)
-              }
-              onDelete={() => onDelete(provider)}
-              onRemoveFromConfig={
-                onRemoveFromConfig
-                  ? () => onRemoveFromConfig(provider)
-                  : undefined
-              }
-              onDisableOmo={handleDisableAnyOmo}
-              onOpenTerminal={
-                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
-              }
-              isAutoFailoverEnabled={isAutoFailoverEnabled}
-              isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={
-                supportsOfficialRouting ? undefined : onToggleFailover
-              }
-              // OpenClaw: default model
-              isDefaultModel={isDefaultModel}
-              isRemovalProtected={isRemovalProtected}
-              isStateChangeProtected={isStateChangeProtected}
-              defaultModelOptions={openclawDefaultModelOptions}
-              onSetAsDefault={onSetAsDefault}
-            />
           </div>
         </div>
       </div>
 
-      {isExpanded && hasMultiplePlans && (
-        <div className="mt-4 pt-4 border-t border-border-default">
-          <UsageFooter
-            provider={provider}
-            providerId={provider.id}
+      {/* 右键操作菜单（替代 hover 按钮组：启动/编辑/复制/检测/用量/终端/删除） */}
+      {ctxMenu && (
+        <div
+          className="fixed z-[100] rounded-lg border border-zinc-800 bg-[#161b22]/95 shadow-2xl shadow-black/40 backdrop-blur"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <ProviderActions
             appId={appId}
-            usageEnabled={usageEnabled}
             isCurrent={isCurrent}
             isInConfig={isInConfig}
-            inline={false}
+            isTesting={isTesting}
+            isProxyTakeover={isProxyTakeover}
+            isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+            isReadOnly={isHermesReadOnly}
+            isOmo={isAnyOmo}
+            onSwitch={() => onSwitch(provider)}
+            onEdit={() => onEdit(provider)}
+            onDuplicate={() => onDuplicate(provider)}
+            onTest={
+              // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
+              // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
+              // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
+              // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
+              // 官方是原生 1P 模式，根本不在请求路径上）。
+              onTest && provider.category !== "official"
+                ? () => onTest(provider)
+                : undefined
+            }
+            onConfigureUsage={
+              (isOfficial && !supportsOfficialSubscription)
+                ? undefined
+                : () => onConfigureUsage(provider)
+            }
+            onRefreshUsage={
+              usageEnabled && !isOfficial ? () => void refetchUsage() : undefined
+            }
+            onDelete={() => onDelete(provider)}
+            onRemoveFromConfig={
+              onRemoveFromConfig
+                ? () => onRemoveFromConfig(provider)
+                : undefined
+            }
+            onDisableOmo={handleDisableAnyOmo}
+            onOpenTerminal={
+              onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+            }
+            isAutoFailoverEnabled={isAutoFailoverEnabled}
+            isInFailoverQueue={isInFailoverQueue}
+            onToggleFailover={
+              supportsOfficialRouting ? undefined : onToggleFailover
+            }
+            // OpenClaw: default model
+            isDefaultModel={isDefaultModel}
+            isRemovalProtected={isRemovalProtected}
+            isStateChangeProtected={isStateChangeProtected}
+            defaultModelOptions={openclawDefaultModelOptions}
+            onSetAsDefault={onSetAsDefault}
           />
         </div>
       )}

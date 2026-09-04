@@ -51,6 +51,8 @@ const CURRENT_ID_KEY: Record<ProfileScope, keyof CurrentProfileIds> = {
 
 interface ProfileSwitcherProps {
   activeApp: AppId;
+  /** 紧凑模式（左侧项目树内嵌）：缩小按钮与名称宽度 */
+  compact?: boolean;
 }
 
 /**
@@ -61,7 +63,7 @@ interface ProfileSwitcherProps {
  * 的供应商）与 Codex 组各自指向自己的当前项目、只应用组内快照。
  * 与右侧 AppSwitcher（仅切换查看的应用）语义不同。
  */
-export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
+export function ProfileSwitcher({ activeApp, compact = false }: ProfileSwitcherProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -115,16 +117,24 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
             })}
             title={t(`profiles.switcherTooltip.${scope}`)}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
+              "inline-flex items-center gap-1 rounded-lg font-medium transition-colors",
               "hover:bg-black/5 dark:hover:bg-white/5",
+              compact
+                ? "h-6 px-1.5 text-[11px]"
+                : "h-8 px-2.5 text-sm",
               currentProfile ? "text-foreground" : "text-muted-foreground",
             )}
           >
-            <FolderOpen className="h-4 w-4 shrink-0 opacity-70" />
-            <span className="max-w-[9rem] truncate">
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            <span
+              className={cn(
+                "truncate",
+                compact ? "max-w-[3.5rem]" : "max-w-[9rem]",
+              )}
+            >
               {currentProfile?.name ?? t("profiles.none")}
             </span>
-            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+            <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
           </button>
         </PopoverTrigger>
         <PopoverContent

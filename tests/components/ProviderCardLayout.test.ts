@@ -24,13 +24,14 @@ const PROVIDER_LIST_TSX = path.resolve(
 describe("ProviderCard layout", () => {
   const source = fs.readFileSync(PROVIDER_CARD_TSX, "utf8");
 
-  it("lets website links use available card width before truncating", () => {
+  it("keeps provider name flexible and does not render website URLs on cards", () => {
     expect(source).not.toContain("max-w-[280px]");
-    expect(source).toContain("flex min-w-0 flex-1 items-center gap-2");
-    expect(source).toContain("min-w-0 flex-1 space-y-1");
-    expect(source).toContain(
-      "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
-    );
+    expect(source).toContain("flex min-w-0 flex-1 items-center gap-1.5");
+    expect(source).toContain("min-w-0 flex-1 space-y-0.5");
+    // 卡片不再显示供应商域名/URL（右栏模型列表保持简洁）
+    expect(source).not.toContain("displayUrl");
+    expect(source).not.toContain("extractApiUrl");
+    expect(source).not.toContain("onOpenWebsite(displayUrl)");
   });
 
   it("does not add a Pi-only model list to provider cards", () => {

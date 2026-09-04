@@ -46,6 +46,7 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import UsageFooter from "@/components/UsageFooter";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
@@ -201,6 +202,29 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // 用量栏：默认显示当前使用模型的用量；点击卡片临时显示该模型用量，3 秒后回退
+  const [usagePinnedProviderId, setUsagePinnedProviderId] = useState<
+    string | null
+  >(null);
+  const usageResetTimer = useRef<number | undefined>(undefined);
+  const currentUsageProvider =
+    providers[currentProviderId] ?? Object.values(providers)[0] ?? null;
+  const usageBarProvider = usagePinnedProviderId
+    ? providers[usagePinnedProviderId] ?? currentUsageProvider
+    : currentUsageProvider;
+
+  const handleShowUsage = useCallback((providerId: string) => {
+    setUsagePinnedProviderId(providerId);
+    window.clearTimeout(usageResetTimer.current);
+    usageResetTimer.current = window.setTimeout(() => {
+      setUsagePinnedProviderId(null);
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => window.clearTimeout(usageResetTimer.current);
+  }, []);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -400,11 +424,11 @@ export function ProviderList({
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-2">
         {[0, 1, 2].map((index) => (
           <div
             key={index}
-            className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
+            className="w-full border border-dashed rounded-lg h-24 border-muted-foreground/40 bg-muted/40"
           />
         ))}
       </div>
@@ -413,7 +437,7 @@ export function ProviderList({
 
   if (sortedProviders.length === 0) {
     return (
-      <div className="mt-4 space-y-4">
+      <div className="mt-2 space-y-2">
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -434,7 +458,7 @@ export function ProviderList({
         items={filteredProviders.map((provider) => provider.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="space-y-3">
+        <div className="space-y-2">
           {filteredProviders.map((provider) => {
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";
@@ -466,6 +490,7 @@ export function ProviderList({
                 }
                 isOmo={isOmo}
                 isOmoSlim={isOmoSlim}
+                onShowUsage={handleShowUsage}
                 onSwitch={onSwitch}
                 onEdit={onEdit}
                 onDelete={onDelete}
@@ -522,96 +547,126 @@ export function ProviderList({
   );
 
   return (
-    <div className="mt-4 space-y-4">
-      {piStateErrorNotice}
-      {claudeDesktopStatusMessages.length > 0 && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
-          <div className="flex items-center gap-2 font-medium">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            {t("claudeDesktop.statusTitle", {
-              defaultValue: "Claude Desktop 配置需要检查",
-            })}
+    <div className="flex h-full w-full flex-col">
+      {/* 标题行：模型列表 + 用量（默认当前使用模型；点击卡片临时切换 3 秒） */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <span className="text-sm font-semibold">
+          {t("provider.title", { defaultValue: "模型列表" })}
+        </span>
+        {usageBarProvider && (
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            <span
+              className="max-w-[6rem] truncate text-[10px] text-muted-foreground"
+              title={usageBarProvider.name}
+            >
+              {usageBarProvider.name}
+            </span>
+            <UsageFooter
+              provider={usageBarProvider}
+              providerId={usageBarProvider.id}
+              appId={appId}
+              usageEnabled={
+                usageBarProvider.meta?.usage_script?.enabled ?? false
+              }
+              isCurrent={false}
+              isInConfig={false}
+              inline
+            />
           </div>
-          <ul className="mt-2 space-y-1 text-xs leading-relaxed">
-            {claudeDesktopStatusMessages.map((message) => (
-              <li key={message}>{message}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-6">
+        {piStateErrorNotice}
+        {claudeDesktopStatusMessages.length > 0 && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+            <div className="flex items-center gap-2 font-medium">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {t("claudeDesktop.statusTitle", {
+                defaultValue: "Claude Desktop 配置需要检查",
+              })}
+            </div>
+            <ul className="mt-2 space-y-1 text-xs leading-relaxed">
+              {claudeDesktopStatusMessages.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <AnimatePresence>
+          {isSearchOpen && (
+            <motion.div
+              key="provider-search"
+              initial={{ opacity: 0, y: -8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.98 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
+            >
+              <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
+                <div className="relative flex items-center gap-2">
+                  <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
+                  <Input
+                    ref={searchInputRef}
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder={t("provider.searchPlaceholder", {
+                      defaultValue: "Search name, notes, or URL...",
+                    })}
+                    aria-label={t("provider.searchAriaLabel", {
+                      defaultValue: "Search providers",
+                    })}
+                    className="pr-16 pl-9"
+                  />
+                  {searchTerm && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
+                      onClick={() => setSearchTerm("")}
+                    >
+                      {t("common.clear", { defaultValue: "Clear" })}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
+                    size="icon"
+                    className="ml-auto"
+                    onClick={() => setIsSearchOpen(false)}
+                    aria-label={t("provider.searchCloseAriaLabel", {
+                      defaultValue: "Close provider search",
+                    })}
                   >
-                    {t("common.clear", { defaultValue: "Clear" })}
+                    <X className="w-4 h-4" />
                   </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {t("provider.searchScopeHint", {
+                      defaultValue: "Matches provider name, notes, and URL.",
+                    })}
+                  </span>
+                  <span>
+                    {t("provider.searchCloseHint", {
+                      defaultValue: "Press Esc to close",
+                    })}
+                  </span>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-      {filteredProviders.length === 0 ? (
-        <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
-          {t("provider.noSearchResults", {
-            defaultValue: "No providers match your search.",
-          })}
-        </div>
-      ) : (
-        renderProviderList()
-      )}
+        {filteredProviders.length === 0 ? (
+          <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+            {t("provider.noSearchResults", {
+              defaultValue: "No providers match your search.",
+            })}
+          </div>
+        ) : (
+          renderProviderList()
+        )}
+      </div>
     </div>
   );
 }
@@ -623,6 +678,8 @@ interface SortableProviderCardProps {
   isInConfig: boolean;
   isOmo: boolean;
   isOmoSlim: boolean;
+  /** 点击卡片：顶部用量栏临时显示该模型用量 */
+  onShowUsage?: (providerId: string) => void;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -656,6 +713,7 @@ function SortableProviderCard({
   isInConfig,
   isOmo,
   isOmoSlim,
+  onShowUsage,
   onSwitch,
   onEdit,
   onDelete,
@@ -703,6 +761,7 @@ function SortableProviderCard({
         isInConfig={isInConfig}
         isOmo={isOmo}
         isOmoSlim={isOmoSlim}
+        onShowUsage={onShowUsage}
         onSwitch={onSwitch}
         onEdit={onEdit}
         onDelete={onDelete}

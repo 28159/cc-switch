@@ -1,7 +1,10 @@
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
+import { AppWindow, MonitorUp, Power, EyeOff, RotateCcw } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import { Button } from "@/components/ui/button";
 import { AnimatePresence, motion } from "framer-motion";
 import { isLinux } from "@/lib/platform";
 
@@ -12,6 +15,19 @@ interface WindowSettingsProps {
 
 export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
   const { t } = useTranslation();
+
+  const handleResetWindowSize = async () => {
+    try {
+      await invoke("reset_window_size");
+      toast.success(
+        t("settings.windowSizeReset", {
+          defaultValue: "窗口大小已重置为默认",
+        }),
+      );
+    } catch (error) {
+      toast.error(String(error ?? ""));
+    }
+  };
 
   return (
     <section className="space-y-4">
@@ -88,6 +104,32 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
             }
           />
         )}
+
+        {/* 重置窗口大小：清除窗口大小/位置记忆，恢复默认尺寸 */}
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/50 px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              {t("settings.resetWindowSize", {
+                defaultValue: "重置窗口大小",
+              })}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t("settings.resetWindowSizeDescription", {
+                defaultValue:
+                  "清除窗口大小与位置记忆，恢复默认尺寸并居中（下次启动生效）",
+              })}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 gap-1.5"
+            onClick={() => void handleResetWindowSize()}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("common.reset", { defaultValue: "重置" })}
+          </Button>
+        </div>
       </div>
     </section>
   );

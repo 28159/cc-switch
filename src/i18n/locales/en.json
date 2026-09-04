@@ -237,8 +237,11 @@
     "route": {
       "tooltip": {
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
-        "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
+        "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}",
+        "unknown": "Fetching routing status… Click the icon to refresh"
       },
+      "refresh": "Refresh routing status",
+      "statusRefreshed": "Routing status refreshed",
       "stopBlockedByTakeover": "Another app is using proxy takeover. Please disable that app's takeover in settings before stopping local routing."
     }
   },
@@ -442,7 +445,52 @@
           "info": "General operation info (default)",
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
-        }
+        },
+        "keepCount": "Log Retention Count",
+        "keepCountDescription": "Maximum number of routing request log files to keep (default 600); the oldest are removed automatically",
+        "logsTitle": "Routing Request Logs",
+        "logsDescription": "View request records handled by the local routing proxy (requires the logging switch above)",
+        "logsEmpty": "No routing logs yet",
+        "logsEmptyHint": "Logs will appear here after the routing service starts serving requests",
+        "refresh": "Refresh",
+        "openFolder": "Open Log Folder",
+        "clearAll": "Clear Logs",
+        "clearAllConfirmTitle": "Clear Routing Logs",
+        "clearAllConfirmMessage": "Clear all routing log files? This action cannot be undone.",
+        "view": "View",
+        "delete": "Delete",
+        "viewerTitle": "Log Content: {{filename}}",
+        "viewerDescription": "Shows at most the latest 1MB (truncated from the end when the file is larger)",
+        "fileCount": "{{count}} log file(s)",
+        "loadFailed": "Failed to load routing logs",
+        "deleteSuccess": "Deleted log {{filename}}",
+        "deleteFailed": "Failed to delete log",
+        "clearedSuccess": "Routing logs cleared",
+        "clearFailed": "Failed to clear logs"
+      },
+      "frpc": {
+        "title": "frpc Remote Access",
+        "description": "Expose this service to the public network via an frp client so phones and other devices can access and control it remotely",
+        "running": "frpc running",
+        "stopped": "frpc stopped",
+        "notInstalled": "frpc not detected",
+        "start": "Start",
+        "stop": "Stop",
+        "accessUrl": "Mobile Access URL",
+        "noAccessUrl": "After configuring the server address and choosing a subdomain or remote port, the mobile access URL will appear here.",
+        "hostHint": "The web service must listen on 0.0.0.0 to be forwarded: start with `pnpm preview --host 0.0.0.0` (or set VITE_HOST=0.0.0.0).",
+        "accessUrlToast": "Remote access URL: {{url}}",
+        "copied": "Access URL copied",
+        "serverAddr": "Server Address",
+        "serverPort": "Server Port",
+        "token": "Auth Token",
+        "tokenPlaceholder": "Leave empty for no auth",
+        "subdomain": "Subdomain (http mode)",
+        "remotePort": "Remote Port (tcp mode)",
+        "localPort": "Local Port",
+        "executablePath": "frpc Executable Path (optional)",
+        "save": "Save & Generate Config",
+        "executableFound": "frpc detected: {{path}}"
       }
     },
     "language": "Language",
@@ -745,6 +793,11 @@
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
       "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "launchTemplates": {
+        "title": "Launch Argument Templates",
+        "description": "Default launch arguments auto-filled when creating a terminal (appended after the tool name). May include --model, --verbose, etc.; picking a Recent Session appends --resume/--session.",
+        "placeholder": "e.g. --model sonnet --verbose"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -2236,6 +2289,49 @@
     "applyWarnings": "Project applied with {{warningCount}} warning(s):\n{{details}}",
     "clearSuccess": "Switched to no project"
   },
+  "terminalHub": {
+    "title": "Terminal",
+    "expand": "Expand terminal panel",
+    "collapse": "Collapse terminal panel",
+    "empty": "No terminals yet. Click the button below to create one.",
+    "newTerminal": "New Terminal",
+    "running": "Running",
+    "stopped": "Stopped",
+    "open": "Open",
+    "stop": "Stop",
+    "delete": "Delete",
+    "projectDir": "Project Directory",
+    "selectProjectDir": "Select project directory",
+    "browse": "Browse…",
+    "noProjectDir": "No project directory",
+    "browseFailed": "Failed to pick directory",
+    "opened": "Terminal opened",
+    "openFailed": "Failed to open terminal",
+    "stoppedToast": "Terminal stopped",
+    "stopFailed": "Failed to stop terminal",
+    "stopUnavailable": "This terminal is not managed by the current session, cannot stop it",
+    "createFailed": "Failed to create terminal",
+    "deleteFailed": "Failed to delete terminal",
+    "deleteConfirmTitle": "Delete Terminal",
+    "deleteConfirmMessage": "Delete terminal \"{{name}}\"?",
+    "newDialog": {
+      "title": "New Terminal",
+      "description": "Run an AI CLI in a native system terminal under the chosen project directory.",
+      "name": "Terminal Name",
+      "namePlaceholder": "e.g. Main Project Claude",
+      "tool": "Tool",
+      "customCommand": "Custom Command",
+      "launchArgs": "Launch Arguments",
+      "launchArgsPlaceholder": "e.g. --model sonnet --verbose (optional)",
+      "launchArgsHint": "Arguments are appended after the tool name; you can configure default templates per tool in Settings.",
+      "sessionContext": "Recent Sessions",
+      "sessionPlaceholder": "Start a new session",
+      "sessionLoading": "Loading sessions…",
+      "sessionEmpty": "No resumable sessions found in this directory.",
+      "sessionHint": "Picking a session appends its flag automatically to resume the {{tool}} context.",
+      "terminal": "Terminal"
+    }
+  },
   "workspace": {
     "title": "Workspace Files",
     "manage": "Workspace",
@@ -2754,6 +2850,37 @@
     "preview": "Preview",
     "clickToChange": "Click to change icon",
     "clickToSelect": "Click to select icon"
+  },
+  "webDirectoryPicker": {
+    "title": "Select Directory",
+    "description": "Browsers cannot obtain the full path of a folder. Please type or paste the path in the input field and confirm.",
+    "pathPlaceholder": "Enter directory path, e.g. C:\\Users\\you\\.claude",
+    "browse": "Browse",
+    "hint": "Use \"Browse\" to pick a folder in the system and auto-fill its name, then complete it into the full path.",
+    "picked": "Selected directory \"{{name}}\". Browsers cannot obtain the full path - please confirm or complete it above.",
+    "pickFailed": "Unable to open the system directory picker"
+  },
+  "mobile": {
+    "statusChecking": "Checking…",
+    "statusRunning": "Routing active",
+    "statusStopped": "Routing stopped",
+    "refreshProjects": "Refresh projects",
+    "desktopMode": "Desktop",
+    "selectProject": "Select Project",
+    "projectCount": "{{count}} project(s)",
+    "searchProject": "Search projects…",
+    "noProjects": "No projects found on the server",
+    "noProjectsHint": "Projects must be under common dev directories (projects / workspace / code / dev / git / Documents) or contain markers like .git / package.json.",
+    "projectsLoadFailed": "Failed to load projects",
+    "switchProvider": "Switch Provider",
+    "noSuppliers": "No providers available for this project",
+    "noSuppliersForApp": "No providers for this app",
+    "bound": "Current",
+    "use": "Use",
+    "switchSuccess": "Provider switched",
+    "switchFailed": "Switch failed: {{detail}}",
+    "suppliersLoadFailed": "Failed to load providers",
+    "pickProjectFirst": "Select a project first to switch providers"
   },
   "migration": {
     "success": "Configuration migrated successfully",

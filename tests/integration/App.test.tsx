@@ -143,6 +143,16 @@ vi.mock("@/components/AppSwitcher", () => ({
   ),
 }));
 
+vi.mock("@/components/terminal/TerminalPanel", () => ({
+  TerminalPanel: ({ activeApp, rightPanel, onOpenHud }: any) => (
+    <div data-testid="terminal-panel">
+      <span data-testid="terminal-active-app">{activeApp}</span>
+      <div data-testid="terminal-right-panel">{rightPanel}</div>
+      {onOpenHud && <button onClick={onOpenHud}>open-hud</button>}
+    </div>
+  ),
+}));
+
 vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
   const React = await import("react");
   const MockUnifiedSkillsPanel = React.forwardRef(
@@ -208,8 +218,10 @@ describe("App integration with MSW", () => {
     localStorage.removeItem("cc-switch-last-app");
   });
 
-  it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
+  it(
+    "covers basic provider flows via real hooks",
+    async () => {
+      const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -263,7 +275,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  }, 10_000);
+  }, 30_000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");

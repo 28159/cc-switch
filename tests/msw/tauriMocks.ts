@@ -36,6 +36,7 @@ vi.mock("@tauri-apps/api/core", () => ({
       return text;
     }
   },
+  isTauri: () => false,
 }));
 
 const listeners = new Map<string, Set<(event: { payload: unknown }) => void>>();

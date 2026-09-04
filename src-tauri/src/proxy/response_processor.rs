@@ -568,6 +568,9 @@ fn spawn_log_usage(
     status_code: u16,
     is_streaming: bool,
 ) {
+    // 实时速率采样
+    super::usage::rate::record_output(&usage);
+
     // Check enable_logging before spawning the log task
     if let Ok(config) = state.config.try_read() {
         if !config.enable_logging {

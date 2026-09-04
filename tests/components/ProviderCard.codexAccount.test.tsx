@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
@@ -131,8 +131,9 @@ describe("ProviderCard Codex Official account identity", () => {
 
     renderCard(provider, { isCurrent: true, onConfigureUsage });
 
-    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
-      expect.objectContaining({ autoQueryInterval: 5 }),
+    // 用量已移出卡片（顶部用量栏展示）；右键菜单仍提供「用量配置」
+    fireEvent.contextMenu(
+      screen.getByRole("heading", { level: 3, name: "Work account" }),
     );
     await user.click(screen.getByRole("button", { name: "configure-usage" }));
     expect(onConfigureUsage).toHaveBeenCalledWith(provider);
@@ -150,27 +151,12 @@ describe("ProviderCard Codex Official account identity", () => {
 
     renderCard(provider, { isCurrent: true });
 
-    expect(codexQuotaFooterProps).not.toHaveBeenCalled();
+    fireEvent.contextMenu(
+      screen.getByRole("heading", { level: 3, name: "Work account" }),
+    );
     expect(
       screen.getByRole("button", { name: "configure-usage" }),
     ).toBeInTheDocument();
-  });
-
-  it("passes the saved polling interval to managed OAuth quota", () => {
-    const provider = managedProvider("Work account");
-    provider.meta!.usage_script = {
-      enabled: true,
-      language: "javascript",
-      code: "",
-      templateType: "official_subscription",
-      autoQueryInterval: 12,
-    };
-
-    renderCard(provider, { isCurrent: true });
-
-    expect(codexQuotaFooterProps).toHaveBeenCalledWith(
-      expect.objectContaining({ autoQueryInterval: 12 }),
-    );
   });
 
   it("keeps a custom nickname and safely truncates a long account login", () => {
@@ -259,7 +245,13 @@ describe("ProviderCard Codex Official account identity", () => {
     expect(
       screen.queryByText("账号会随 Codex CLI 当前登录变化"),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("codex-oauth-quota")).toBeInTheDocument();
+    // 用量已移出卡片（顶部用量栏）；右键菜单仍可配置用量
+    fireEvent.contextMenu(
+      screen.getByRole("heading", { level: 3, name: "OpenAI Official" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "configure-usage" }),
+    ).toBeInTheDocument();
   });
 
   it("shows a manual note instead of generated account guidance", () => {
@@ -293,6 +285,9 @@ expect(
     expect(
       screen.queryByRole("button", { name: "选择账号" }),
     ).not.toBeInTheDocument();
+    fireEvent.contextMenu(
+      screen.getByRole("heading", { level: 3, name: "Legacy Official" }),
+    );
     expect(
       screen.getByRole("button", { name: "duplicate-provider" }),
     ).toBeInTheDocument();

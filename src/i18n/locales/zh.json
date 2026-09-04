@@ -237,8 +237,11 @@
     "route": {
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
-        "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
+        "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}",
+        "unknown": "正在获取路由状态…点击图标可刷新"
       },
+      "refresh": "刷新路由状态",
+      "statusRefreshed": "已刷新路由状态",
       "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
@@ -442,7 +445,52 @@
           "info": "一般操作信息（默认）",
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
-        }
+        },
+        "keepCount": "日志保留份数",
+        "keepCountDescription": "路由请求日志最多保留的份数（默认 600），超出自动删除最旧的",
+        "logsTitle": "路由请求日志",
+        "logsDescription": "查看本地路由代理处理的请求记录（需启用上方日志开关）",
+        "logsEmpty": "暂无路由日志",
+        "logsEmptyHint": "启动路由服务并产生请求后，日志会出现在这里",
+        "refresh": "刷新",
+        "openFolder": "打开日志目录",
+        "clearAll": "清空日志",
+        "clearAllConfirmTitle": "清空路由日志",
+        "clearAllConfirmMessage": "确认清空全部路由日志文件？此操作不可恢复。",
+        "view": "查看",
+        "delete": "删除",
+        "viewerTitle": "日志内容：{{filename}}",
+        "viewerDescription": "最多显示最新 1MB 内容（文件超出时截取尾部）",
+        "fileCount": "共 {{count}} 份日志",
+        "loadFailed": "加载路由日志失败",
+        "deleteSuccess": "已删除日志 {{filename}}",
+        "deleteFailed": "删除日志失败",
+        "clearedSuccess": "路由日志已清空",
+        "clearFailed": "清空日志失败"
+      },
+      "frpc": {
+        "title": "frpc 远程访问",
+        "description": "通过 frp 客户端把本服务暴露到公网，让手机等设备远程访问并控制",
+        "running": "frpc 运行中",
+        "stopped": "frpc 已停止",
+        "notInstalled": "未检测到 frpc",
+        "start": "启动",
+        "stop": "停止",
+        "accessUrl": "手机访问地址",
+        "noAccessUrl": "配置服务器地址并选择子域名或远程端口后，这里会显示手机访问地址。",
+        "hostHint": "需要 web 服务监听 0.0.0.0 才能被转发：启动时使用 `pnpm preview --host 0.0.0.0`（或设置 VITE_HOST=0.0.0.0）。",
+        "accessUrlToast": "远程访问地址：{{url}}",
+        "copied": "访问地址已复制",
+        "serverAddr": "服务器地址",
+        "serverPort": "服务器端口",
+        "token": "认证 Token",
+        "tokenPlaceholder": "留空表示无认证",
+        "subdomain": "子域名（http 模式）",
+        "remotePort": "远程端口（tcp 模式）",
+        "localPort": "本地端口",
+        "executablePath": "frpc 可执行文件路径（可选）",
+        "save": "保存并生成配置",
+        "executableFound": "已检测到 frpc：{{path}}"
       }
     },
     "language": "界面语言",
@@ -745,6 +793,11 @@
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
       "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "launchTemplates": {
+        "title": "启动参数模板",
+        "description": "新建终端时自动预填的启动参数（追加在工具名之后）。可包含 --model、--verbose 等；选择“最近会话”时自动追加 --resume/--session。",
+        "placeholder": "如 --model sonnet --verbose"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -2236,6 +2289,49 @@
     "applyWarnings": "项目已应用，{{warningCount}} 条警告：\n{{details}}",
     "clearSuccess": "已切换为不使用项目"
   },
+  "terminalHub": {
+    "title": "终端",
+    "expand": "展开终端面板",
+    "collapse": "收起终端面板",
+    "empty": "还没有终端，点击下方按钮新建一个。",
+    "newTerminal": "新建终端",
+    "running": "运行中",
+    "stopped": "已停止",
+    "open": "打开",
+    "stop": "停止",
+    "delete": "删除",
+    "projectDir": "项目目录",
+    "selectProjectDir": "选择项目目录",
+    "browse": "浏览…",
+    "noProjectDir": "暂无项目目录",
+    "browseFailed": "选择目录失败",
+    "opened": "终端已打开",
+    "openFailed": "打开终端失败",
+    "stoppedToast": "终端已停止",
+    "stopFailed": "停止终端失败",
+    "stopUnavailable": "该终端不由当前会话管理，无法停止",
+    "createFailed": "新建终端失败",
+    "deleteFailed": "删除终端失败",
+    "deleteConfirmTitle": "删除终端",
+    "deleteConfirmMessage": "确定要删除终端「{{name}}」吗？",
+    "newDialog": {
+      "title": "新建终端",
+      "description": "在指定项目目录下用系统原生终端运行 AI CLI 工具。",
+      "name": "终端名称",
+      "namePlaceholder": "例如：主项目 Claude",
+      "tool": "执行工具",
+      "customCommand": "自定义命令",
+      "launchArgs": "启动参数",
+      "launchArgsPlaceholder": "如 --model sonnet --verbose（可选）",
+      "launchArgsHint": "启动参数会追加在工具名之后；可在设置中配置各工具的默认模板。",
+      "sessionContext": "最近会话",
+      "sessionPlaceholder": "不恢复会话（新会话）",
+      "sessionLoading": "加载会话中…",
+      "sessionEmpty": "该目录下未找到可恢复的会话。",
+      "sessionHint": "选择会话后会自动加入启动参数，恢复 {{tool}} 之前的对话上下文。",
+      "terminal": "终端程序"
+    }
+  },
   "workspace": {
     "title": "Workspace 文件管理",
     "manage": "Workspace",
@@ -2754,6 +2850,37 @@
     "preview": "预览",
     "clickToChange": "点击更换图标",
     "clickToSelect": "点击选择图标"
+  },
+  "webDirectoryPicker": {
+    "title": "选择目录",
+    "description": "浏览器无法获取文件夹的完整路径，请通过输入框填写或粘贴路径后确认。",
+    "pathPlaceholder": "输入目录路径，如 C:\\Users\\you\\.claude",
+    "browse": "浏览目录",
+    "hint": "使用「浏览目录」可在系统中选择文件夹并自动填入目录名，请补全为完整路径。",
+    "picked": "已选择目录「{{name}}」，浏览器无法获取完整路径，请在上方确认或补全。",
+    "pickFailed": "无法打开系统目录选择器"
+  },
+  "mobile": {
+    "statusChecking": "检测中…",
+    "statusRunning": "路由运行中",
+    "statusStopped": "路由已停止",
+    "refreshProjects": "刷新项目",
+    "desktopMode": "桌面版",
+    "selectProject": "选择项目",
+    "projectCount": "{{count}} 个项目",
+    "searchProject": "搜索项目…",
+    "noProjects": "服务器上未扫描到项目",
+    "noProjectsHint": "项目需位于常用开发目录（projects / workspace / code / dev / git / Documents）或包含 .git / package.json 等标识。",
+    "projectsLoadFailed": "加载项目列表失败",
+    "switchProvider": "切换供应商",
+    "noSuppliers": "该项目没有可用的供应商",
+    "noSuppliersForApp": "该应用下没有供应商",
+    "bound": "当前",
+    "use": "使用",
+    "switchSuccess": "供应商已切换",
+    "switchFailed": "切换失败：{{detail}}",
+    "suppliersLoadFailed": "加载供应商失败",
+    "pickProjectFirst": "请先选择项目，再切换供应商"
   },
   "migration": {
     "success": "配置迁移成功",

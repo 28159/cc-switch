@@ -34,6 +34,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod terminal_workbench;
 
 mod tray;
 mod usage_events;
@@ -408,7 +409,28 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            // HUD 窗口事件诊断日志
+            if window.label() == "cc-switch-hud" {
+                match event {
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        log::info!("[HUD] CloseRequested 事件（改为隐藏而非销毁）");
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        log::warn!("[HUD] 窗口被销毁（Destroyed）");
+                    }
+                    _ => {}
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // HUD 悬浮窗：只隐藏、不销毁。拖动/关闭过程中销毁窗口会触发
+                // tao 0.34.x Windows 事件循环的 "cannot move state from Destroyed"
+                // panic（上游 tao#1180 尚未修复），导致整个应用闪退；
+                // 且 HUD 窗口常驻复用后打开更流畅。
+                if window.label() == "cc-switch-hud" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
@@ -1593,6 +1615,7 @@ pub fn run() {
             commands::get_usage_trends,
             commands::get_provider_stats,
             commands::get_model_stats,
+            proxy::usage::rate::get_model_rate,
             commands::get_request_logs,
             commands::get_request_detail,
             commands::get_model_pricing,
@@ -1623,6 +1646,34 @@ pub fn run() {
             commands::probe_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
+            // Terminal workbench (three-column workspace)
+            terminal_workbench::get_terminal_hub_state,
+            terminal_workbench::save_terminal_hub_state,
+            terminal_workbench::create_terminal_instance,
+            terminal_workbench::delete_terminal_instance,
+            terminal_workbench::detect_available_terminals,
+            terminal_workbench::launch_terminal,
+            terminal_workbench::kill_terminal,
+            terminal_workbench::check_terminal_alive,
+            terminal_workbench::focus_terminal,
+            terminal_workbench::ensure_embedded_terminal,
+            terminal_workbench::attach_embedded_terminal,
+            terminal_workbench::write_embedded_terminal,
+            terminal_workbench::resize_embedded_terminal,
+            terminal_workbench::close_embedded_terminal,
+            terminal_workbench::list_projects,
+            terminal_workbench::create_project,
+            terminal_workbench::delete_project,
+            terminal_workbench::get_project_detail,
+            terminal_workbench::apply_project,
+            terminal_workbench::list_tool_sessions,
+            terminal_workbench::polish_prompt,
+            terminal_workbench::list_project_dir,
+            terminal_workbench::read_project_file,
+            terminal_workbench::write_project_file,
+            terminal_workbench::git_status,
+            terminal_workbench::git_diff,
+            terminal_workbench::reset_window_size,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,
@@ -1914,6 +1965,9 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
             log::info!("代理服务器清理完成");
         }
     }
+
+    // 程序退出：清理后台内嵌终端会话（终止其进程树）
+    terminal_workbench::cleanup_all_embedded();
 }
 
 /// 主动从系统托盘移除托盘图标。

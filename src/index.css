@@ -264,6 +264,15 @@ input[type="password"]::-ms-clear {
   display: none;
 }
 
+/* 终端面板：xterm 滚动条兜底样式（确保深色背景下可见、可拖拽） */
+.xterm .xterm-scrollable-element > .scrollbar {
+  opacity: 1 !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  min-width: 8px;
+  border-radius: 4px;
+}
+
 /*
  * Usage date-range picker popover.
  *

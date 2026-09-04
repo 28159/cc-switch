@@ -237,8 +237,11 @@
     "route": {
       "tooltip": {
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
-        "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
+        "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}",
+        "unknown": "ルーティング状態を取得中…アイコンをクリックして更新"
       },
+      "refresh": "ルーティング状態を更新",
+      "statusRefreshed": "ルーティング状態を更新しました",
       "stopBlockedByTakeover": "別のアプリがプロキシテイクオーバーを使用しています。設定で該当アプリのテイクオーバーを無効にしてから、ローカルルーティングを停止してください。"
     }
   },
@@ -442,7 +445,52 @@
           "info": "一般的な操作情報（デフォルト）",
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
-        }
+        },
+        "keepCount": "ログ保持数",
+        "keepCountDescription": "ルーティング要求ログを保持する最大ファイル数（デフォルト 600）。超過分は古いものから自動削除",
+        "logsTitle": "ルーティング要求ログ",
+        "logsDescription": "ローカルルーティングプロキシが処理した要求記録を表示（上のログスイッチの有効化が必要）",
+        "logsEmpty": "ルーティングログはまだありません",
+        "logsEmptyHint": "ルーティングサービスを起動して要求が発生すると、ここに表示されます",
+        "refresh": "更新",
+        "openFolder": "ログフォルダを開く",
+        "clearAll": "ログをクリア",
+        "clearAllConfirmTitle": "ルーティングログをクリア",
+        "clearAllConfirmMessage": "すべてのルーティングログファイルを削除しますか？この操作は元に戻せません。",
+        "view": "表示",
+        "delete": "削除",
+        "viewerTitle": "ログ内容：{{filename}}",
+        "viewerDescription": "最新 1MB まで表示（ファイルが大きい場合は末尾を切り取ります）",
+        "fileCount": "合計 {{count}} ファイル",
+        "loadFailed": "ルーティングログの読み込みに失敗",
+        "deleteSuccess": "ログ {{filename}} を削除しました",
+        "deleteFailed": "ログの削除に失敗",
+        "clearedSuccess": "ルーティングログをクリアしました",
+        "clearFailed": "ログのクリアに失敗"
+      },
+      "frpc": {
+        "title": "frpc リモートアクセス",
+        "description": "frp クライアントで本サービスを公開ネットワークに公開し、スマホなどからリモートでアクセス・操作できるようにします",
+        "running": "frpc 実行中",
+        "stopped": "frpc 停止中",
+        "notInstalled": "frpc が見つかりません",
+        "start": "起動",
+        "stop": "停止",
+        "accessUrl": "スマホ用アクセス URL",
+        "noAccessUrl": "サーバーアドレスとサブドメインまたはリモートポートを設定すると、ここにスマホ用アクセス URL が表示されます。",
+        "hostHint": "転送するには web サービスが 0.0.0.0 をリッスンする必要があります：`pnpm preview --host 0.0.0.0`（または VITE_HOST=0.0.0.0）で起動してください。",
+        "accessUrlToast": "リモートアクセス URL：{{url}}",
+        "copied": "アクセス URL をコピーしました",
+        "serverAddr": "サーバーアドレス",
+        "serverPort": "サーバーポート",
+        "token": "認証トークン",
+        "tokenPlaceholder": "空欄で認証なし",
+        "subdomain": "サブドメイン（http モード）",
+        "remotePort": "リモートポート（tcp モード）",
+        "localPort": "ローカルポート",
+        "executablePath": "frpc 実行ファイルパス（任意）",
+        "save": "保存して設定を生成",
+        "executableFound": "frpc を検出：{{path}}"
       }
     },
     "language": "言語",
@@ -745,6 +793,11 @@
       "title": "優先ターミナル",
       "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
       "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "launchTemplates": {
+        "title": "起動引数テンプレート",
+        "description": "ターミナル作成時に自動入力される起動引数（ツール名の後に追加）。--model、--verbose などを含められます。「最近のセッション」を選択すると --resume/--session が自動追加されます。",
+        "placeholder": "例: --model sonnet --verbose"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -2754,6 +2807,37 @@
     "preview": "プレビュー",
     "clickToChange": "クリックでアイコンを変更",
     "clickToSelect": "クリックでアイコンを選択"
+  },
+  "webDirectoryPicker": {
+    "title": "ディレクトリを選択",
+    "description": "ブラウザではフォルダの完全なパスを取得できません。入力欄にパスを入力または貼り付けて確認してください。",
+    "pathPlaceholder": "ディレクトリパスを入力（例: C:\\Users\\you\\.claude）",
+    "browse": "参照",
+    "hint": "「参照」でシステムからフォルダを選択して名前を自動入力し、完全なパスに補完してください。",
+    "picked": "ディレクトリ「{{name}}」を選択しました。ブラウザでは完全なパスを取得できないため、上記の入力を確認または補完してください。",
+    "pickFailed": "システムのディレクトリ選択ダイアログを開けませんでした"
+  },
+  "mobile": {
+    "statusChecking": "確認中…",
+    "statusRunning": "ルーティング実行中",
+    "statusStopped": "ルーティング停止中",
+    "refreshProjects": "プロジェクトを更新",
+    "desktopMode": "デスクトップ",
+    "selectProject": "プロジェクトを選択",
+    "projectCount": "{{count}} 件のプロジェクト",
+    "searchProject": "プロジェクトを検索…",
+    "noProjects": "サーバーにプロジェクトが見つかりません",
+    "noProjectsHint": "プロジェクトは一般的な開発ディレクトリ（projects / workspace / code / dev / git / Documents）に置くか、.git / package.json などのマーカーを含む必要があります。",
+    "projectsLoadFailed": "プロジェクト一覧の読み込みに失敗",
+    "switchProvider": "プロバイダーを切り替え",
+    "noSuppliers": "このプロジェクトで利用できるプロバイダーがありません",
+    "noSuppliersForApp": "このアプリにプロバイダーがありません",
+    "bound": "現在",
+    "use": "使用",
+    "switchSuccess": "プロバイダーを切り替えました",
+    "switchFailed": "切り替え失敗：{{detail}}",
+    "suppliersLoadFailed": "プロバイダーの読み込みに失敗",
+    "pickProjectFirst": "プロバイダーを切り替えるには先にプロジェクトを選択してください"
   },
   "migration": {
     "success": "設定の移行が完了しました",
