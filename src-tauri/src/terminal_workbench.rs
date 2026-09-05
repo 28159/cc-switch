@@ -20,6 +20,15 @@ use tauri::Manager;
 
 use crate::settings;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// GUI 应用（windows_subsystem = "windows"）从无控制台进程启动
+/// 控制台子程序（tasklist/taskkill/powershell 等）时，Windows 会新建
+/// 一个控制台窗口；设置此标志可抑制，避免「黑窗口一闪而过」。
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 // ============================================================================
 // 数据结构（与前端 src/types/terminal.ts、src/lib/api/project.ts 对齐）
 // ============================================================================
@@ -266,6 +275,24 @@ pub fn delete_terminal_instance(id: String) -> Result<TerminalHubState, String> 
     let mut hub = read_hub();
     hub.instances.retain(|item| item.id != id);
     write_hub(&hub)?;
+
+    // 清理该实例残留的内嵌会话（进程 + 订阅者）：HUD 与大屏是独立前端实例，
+    // 另一窗口启动的 pty 会话在前端本地注册表里可能没有记录，删除实例时
+    // 必须按 instance_id 兜底清理，避免删除后进程仍在后台运行。
+    let stale: Vec<u64> = {
+        let sessions = EMBEDDED.lock().unwrap();
+        sessions
+            .iter()
+            .filter(|(_, s)| s.instance_id == id)
+            .map(|(pty_id, _)| *pty_id)
+            .collect()
+    };
+    for pty_id in stale {
+        tauri::async_runtime::spawn(async move {
+            let _ = close_embedded_terminal(pty_id).await;
+        });
+    }
+
     Ok(hub)
 }
 
@@ -549,6 +576,7 @@ pub async fn close_embedded_terminal(pty_id: u64) -> Result<(), String> {
                 tauri::async_runtime::spawn_blocking(move || {
                     let _ = Command::new("taskkill")
                         .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .creation_flags(CREATE_NO_WINDOW)
                         .output();
                 });
             }
@@ -573,6 +601,7 @@ pub fn cleanup_all_embedded() {
             if let Some(pid) = pid {
                 let _ = Command::new("taskkill")
                     .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output();
             }
         }
@@ -757,6 +786,7 @@ pub async fn kill_terminal(pid: i64) -> bool {
         tauri::async_runtime::spawn_blocking(move || {
             Command::new("taskkill")
                 .args(["/PID", &target.to_string(), "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false)
@@ -831,6 +861,7 @@ if ($script:found -ne [IntPtr]::Zero) {{
         );
         let output = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         return output
             .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
@@ -876,6 +907,7 @@ pub fn check_terminal_alive(pid: i64) -> bool {
     {
         let output = Command::new("tasklist")
             .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         let stdout = output.map(|o| o.stdout).unwrap_or_default();
         String::from_utf8_lossy(&stdout).contains(&pid.to_string())
@@ -927,6 +959,33 @@ pub fn create_project(
     projects.push(project.clone());
     write_projects(&projects)?;
     Ok(project)
+}
+
+#[tauri::command]
+pub fn update_project(
+    id: String,
+    name: String,
+    #[allow(non_snake_case)] projectDir: String,
+) -> Result<DevProject, String> {
+    let name = name.trim().to_string();
+    let project_dir = projectDir.trim().to_string();
+    if name.is_empty() {
+        return Err("项目名称不能为空".to_string());
+    }
+    if project_dir.is_empty() {
+        return Err("请选择项目目录".to_string());
+    }
+    let mut projects = read_projects();
+    let project = projects
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "项目不存在".to_string())?;
+    project.name = name;
+    project.project_dir = project_dir;
+    project.updated_at = now_secs();
+    let updated = project.clone();
+    write_projects(&projects)?;
+    Ok(updated)
 }
 
 #[tauri::command]

@@ -132,7 +132,6 @@ export function TerminalPrompt({ getPtyId }: TerminalPromptProps) {
       }
       persistEntry({ text: content, at: Date.now() });
       setText("");
-      toast.success("已发送到终端");
     })();
   }, [getPtyId, persistEntry, text]);
 
@@ -185,7 +184,7 @@ export function TerminalPrompt({ getPtyId }: TerminalPromptProps) {
               handleSend();
             }
           }}
-          placeholder="输入要发送到终端的内容（Enter 发送，点 ↑ 展开富文本编辑）"
+          placeholder="输入要发送到终端的内容"
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:border-foreground/40 focus:outline-none"
         />
         <button
@@ -314,7 +313,7 @@ export function TerminalPrompt({ getPtyId }: TerminalPromptProps) {
               handleSend();
             }
           }}
-          placeholder="输入要发送到终端的内容（支持 Markdown 富文本，Ctrl/⌘ + Enter 发送）"
+          placeholder="输入要发送到终端的内容"
           rows={3}
           className="min-h-0 flex-1 resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:border-foreground/40 focus:outline-none"
         />

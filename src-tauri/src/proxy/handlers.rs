@@ -2786,8 +2786,8 @@ async fn log_usage(
     status_code: u16,
     session_id: Option<String>,
 ) {
-    // 实时速率采样
-    super::usage::rate::record_output(&usage);
+    // 实时速率采样（latency_ms 为该请求真实耗时，供速率分母使用）
+    super::usage::rate::record_output(&usage, latency_ms);
 
     use super::usage::logger::UsageLogger;
 

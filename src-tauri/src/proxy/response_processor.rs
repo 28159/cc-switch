@@ -472,9 +472,6 @@ pub(crate) fn create_usage_collector(
         .try_read()
         .map(|c| c.enable_logging)
         .unwrap_or(true);
-    if !logging_enabled {
-        return None;
-    }
 
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
@@ -500,6 +497,13 @@ pub(crate) fn create_usage_collector(
         parser_config.stream_event_filter,
         move |events, first_token_ms| {
             if let Some(usage) = stream_parser(&events) {
+                // 实时速率采样：独立于日志开关（终端实时速率始终可用）；
+                // 耗时用真实请求时长，避免整段输出压进一个时间点
+                super::usage::rate::record_output(&usage, start_time.elapsed().as_millis() as u64);
+                if !logging_enabled {
+                    return;
+                }
+
                 let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
@@ -526,7 +530,9 @@ pub(crate) fn create_usage_collector(
                     )
                     .await;
                 });
-            } else {
+            } else if logging_enabled {
+                // 解析不出 usage：无速率样本（record_output 会过滤 0 输出），
+                // 仅走日志路径
                 let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
                 let state = state.clone();
@@ -568,8 +574,8 @@ fn spawn_log_usage(
     status_code: u16,
     is_streaming: bool,
 ) {
-    // 实时速率采样
-    super::usage::rate::record_output(&usage);
+    // 实时速率采样：独立于日志开关（与流式路径一致，每请求只采样一次）
+    super::usage::rate::record_output(&usage, ctx.latency_ms());
 
     // Check enable_logging before spawning the log task
     if let Ok(config) = state.config.try_read() {

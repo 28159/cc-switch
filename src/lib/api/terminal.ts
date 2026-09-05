@@ -138,6 +138,10 @@ export interface ModelRateInfo {
   outputTokens: number;
   /** 窗口实际覆盖秒数（无样本时为 0） */
   sampleSeconds: number;
+  /** 累计 token 消耗（含输入 / 缓存，进程启动以来） */
+  totalTokens: number;
+  /** 最近一次请求耗时（毫秒；无请求时为 0） */
+  lastDurationMs: number;
   /** 最近一次请求的模型名 */
   lastModel?: string | null;
 }

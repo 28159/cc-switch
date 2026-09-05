@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { ArrowDown } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { terminalApi } from "@/lib/api/terminal";
@@ -94,6 +96,8 @@ export function EmbeddedTerminal({
   const [bootNonce, setBootNonce] = useState(0);
   const [exited, setExited] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
+  /** 是否处于非底部（滚动到上面后显示「回到底部」按钮） */
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   // 应用主题切换时，动态更新 xterm 配色（无需重启会话）
   useEffect(() => {
@@ -145,6 +149,9 @@ export function EmbeddedTerminal({
     const container = containerRef.current;
     if (!container) return;
 
+    // 新会话默认位于底部，隐藏「回到底部」按钮（若切换/重启前停在旧内容上方）
+    setShowScrollToBottom(false);
+
     // 代数递增：使之前未完成的异步 boot 失效（防快速切换实例时误注册）
     const gen = ++bootGenRef.current;
 
@@ -175,6 +182,20 @@ export function EmbeddedTerminal({
     term.open(container);
     doFit();
 
+    // WebGL 渲染器：默认 DOM 渲染器每个单元格是独立 DOM 节点，ConPTY 在
+    // 每次按键回显时整屏重绘，表现为输入内容时终端闪烁一下；WebGL 原子化
+    // 绘制可消除闪烁。初始化失败（无 GPU / 上下文丢失）自动回退 DOM。
+    let webgl: WebglAddon | null = null;
+    try {
+      webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl?.dispose();
+      });
+      term.loadAddon(webgl);
+    } catch {
+      webgl?.dispose();
+    }
+
     const disposables: Array<() => void> = [];
     const onDataDisposable = term.onData((data) => {
       const ptyId = ptyIdRef.current;
@@ -183,6 +204,12 @@ export function EmbeddedTerminal({
       }
     });
     disposables.push(() => onDataDisposable.dispose());
+    // 滚动监听：离开底部时显示「回到底部」按钮，回到底部自动隐藏
+    const onScrollDisposable = term.onScroll(() => {
+      const buffer = term.buffer.active;
+      setShowScrollToBottom(buffer.viewportY < buffer.baseY);
+    });
+    disposables.push(() => onScrollDisposable.dispose());
 
     setBootError(null);
     reportExit(false);
@@ -295,6 +322,21 @@ export function EmbeddedTerminal({
       {/* xterm 容器绝对定位铺满：避免 flex 布局干扰 xterm 的绝对定位 viewport */}
       <div className="relative min-h-0 flex-1">
         <div ref={containerRef} className="absolute inset-0" />
+        {/* 回到底部按钮：仅当向上滚动离开底部时显示 */}
+        {showScrollToBottom && (
+          <button
+            type="button"
+            onClick={() => {
+              termRef.current?.scrollToBottom();
+              setShowScrollToBottom(false);
+            }}
+            title="滚动到底部"
+            aria-label="滚动到底部"
+            className="absolute bottom-3 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background/90 text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       <TerminalPrompt getPtyId={() => ptyIdRef.current} />
       {(exited || bootError) && (

@@ -1,5 +1,19 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
+import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   TerminalSquare,
   Square,
@@ -7,14 +21,18 @@ import {
   Plus,
   FolderKanban,
   Loader2,
-  ChevronRight,
-  ChevronDown,
   RotateCcw,
   History,
   PanelLeftClose,
   PanelLeftOpen,
   Gauge,
   Play,
+  Maximize2,
+  Pencil,
+  ChevronsDown,
+  ChevronsUp,
+  ChevronRight,
+  GitBranch,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -29,6 +47,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { APP_ICON_MAP, getAppLabel } from "@/config/appConfig";
 import { settingsApi, terminalApi, type AppId } from "@/lib/api";
 import type { ModelRateInfo } from "@/lib/api/terminal";
@@ -39,9 +63,8 @@ import {
 } from "@/hooks/useTerminalHub";
 import { NewTerminalDialog } from "./NewTerminalDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
-import { ProjectFileBrowser } from "./ProjectFileBrowser";
+import { projectFilesApi, type GitStatusResult } from "@/lib/api/projectFiles";
 import {
-  TERMINAL_TOOL_LABEL,
   type TerminalInstance,
   type TerminalTool,
   type ToolSessionInfo,
@@ -57,6 +80,94 @@ const EmbeddedTerminalLazy = lazy(() =>
 
 /** 支持「最近会话」恢复的工具（启动参数里注入 resume/session 标记）。 */
 const SESSION_TOOLS: TerminalTool[] = ["claude", "opencode"];
+
+/** 终端列表条目（树形子节点，支持拖拽排序）。 */
+function SortableTerminalItem({
+  instance,
+  status,
+  isSelected,
+  isContextTarget,
+  onSelect,
+  onContextMenu,
+}: {
+  instance: TerminalInstance;
+  status: TerminalAliveStatus | "stopped";
+  isSelected: boolean;
+  isContextTarget: boolean;
+  onSelect: (instance: TerminalInstance) => void;
+  onContextMenu: (event: React.MouseEvent, instance: TerminalInstance) => void;
+}) {
+  const { t } = useTranslation();
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: instance.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.55 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      onClick={() => onSelect(instance)}
+      onContextMenu={(event) => onContextMenu(event, instance)}
+      className={cn(
+        "group flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 transition-colors",
+        isSelected
+          ? "bg-primary/10 font-medium text-primary"
+          : "text-foreground/80 hover:bg-muted/40",
+        isContextTarget && "bg-muted/60",
+        isDragging && "z-10 bg-background shadow-lg",
+      )}
+      {...attributes}
+      {...listeners}
+    >
+      {/* 应用 logo + 运行状态角标 */}
+      <div className="relative shrink-0">
+        <div className="flex h-5 w-5 items-center justify-center rounded border border-border/60 bg-background/80">
+          {APP_ICON_MAP[instance.app as AppId]?.icon ?? (
+            <TerminalSquare className="h-3 w-3 text-muted-foreground" />
+          )}
+        </div>
+        <span
+          className={cn(
+            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-background",
+            status === "running"
+              ? "bg-emerald-500"
+              : status === "idle"
+                ? "bg-amber-400"
+                : "bg-muted-foreground/40",
+          )}
+        />
+      </div>
+      <span className="min-w-0 flex-1 truncate text-xs">{instance.name}</span>
+      <span
+        className={cn(
+          "shrink-0 text-[9px]",
+          status === "running"
+            ? "text-emerald-600"
+            : status === "idle"
+              ? "text-amber-500"
+              : "text-muted-foreground/60",
+        )}
+      >
+        {status === "running"
+          ? t("terminalHub.running", { defaultValue: "运行中" })
+          : status === "idle"
+            ? t("terminalHub.idle", { defaultValue: "空闲" })
+            : t("terminalHub.stopped", { defaultValue: "已停止" })}
+      </span>
+    </div>
+  );
+}
 
 /** 工具 → 会话恢复参数名。 */
 const SESSION_ARG_FLAG: Partial<Record<TerminalTool, string>> = {
@@ -104,6 +215,32 @@ function formatSessionTime(iso?: string): string {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** token 数量展示：12345 → 12.3k，1234567 → 1.2M */
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/** 请求耗时展示：12500 → 12.5s，125000 → 2m05s */
+function formatDuration(ms: number): string {
+  const safe = Math.max(0, ms);
+  const secs = safe / 1000;
+  if (secs < 60) return `${secs.toFixed(secs < 10 ? 1 : 0)}s`;
+  const minutes = Math.floor(secs / 60);
+  return `${minutes}m${String(Math.round(secs % 60)).padStart(2, "0")}s`;
+}
+
+/** git status 字母标记 → 状态色 */
+function gitStatusColor(raw: string): string {
+  if (raw.startsWith("??")) return "text-emerald-500";
+  if (raw.includes("D")) return "text-red-500";
+  if (raw.includes("A")) return "text-emerald-500";
+  if (raw.includes("M")) return "text-amber-500";
+  if (raw.includes("R")) return "text-sky-500";
+  return "text-muted-foreground";
+}
+
 /** 实例存活状态：内嵌会话（后端 PTY）优先，其次系统终端 pid 轮询结果。 */
 function instanceAliveStatus(
   instance: TerminalInstance,
@@ -134,6 +271,8 @@ export interface TerminalPanelProps {
   onHeaderDragStart?: (event: React.MouseEvent) => void;
   /** 仅选择模式（HUD 小窗）：项目点击只应用/选择，不展开文件树 */
   selectOnly?: boolean;
+  /** HUD 模式：终端头部显示「还原大屏幕」按钮（点击恢复主窗口并隐藏 HUD） */
+  onHudRestore?: () => void;
 }
 
 /** 左栏宽度（项目树 + 终端列表） */
@@ -150,6 +289,8 @@ const LEFT_COLLAPSED_KEY = "cc-switch-terminal-left-collapsed";
 const SELECTED_STORAGE_KEY = "cc-switch-terminal-selected";
 /** 选中项目持久化 key */
 const PROJECT_STORAGE_KEY = "cc-switch-terminal-project";
+/** 树形「未分组终端」虚拟分组 id */
+const UNASSIGNED_GROUP_ID = "__unassigned__";
 
 /**
  * 终端工作台（主页面三栏式布局）：
@@ -166,6 +307,7 @@ export function TerminalPanel({
   hudDraggable = false,
   selectOnly = false,
   onHeaderDragStart,
+  onHudRestore,
 }: TerminalPanelProps) {
   const { t } = useTranslation();
   const hub = useTerminalHub();
@@ -202,6 +344,8 @@ export function TerminalPanel({
       return null;
     }
   });
+  /** 删除进行中的实例 id（ref：effect 中用于抑制删除后的自动切换） */
+  const deletingRef = useRef<string | null>(null);
   /** 开发项目：列表 + 当前选中（localStorage 记忆） */
   const [projects, setProjects] = useState<DevProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -213,14 +357,20 @@ export function TerminalPanel({
       }
     },
   );
-  /** 项目树展开状态 */
-  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  /** 当前项目的 Git 更改文件（底部区域展示） */
+  const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectBusy, setProjectBusy] = useState(false);
   const [confirmDeleteProject, setConfirmDeleteProject] =
     useState<DevProject | null>(null);
+  /** 正在编辑的项目（null = 新建模式） */
+  const [editingProject, setEditingProject] = useState<DevProject | null>(null);
+  /** 「新建终端」目标项目 id（项目树行内 + 按钮） */
+  const [newTerminalProjectId, setNewTerminalProjectId] = useState<
+    string | null
+  >(null);
+  /** 树形节点展开集合（默认全部展开，新项目自动展开） */
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   /** 历史会话恢复下拉状态 */
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [sessionList, setSessionList] = useState<ToolSessionInfo[]>([]);
@@ -252,7 +402,20 @@ export function TerminalPanel({
     const tick = async () => {
       try {
         const rate = await terminalApi.getModelRate();
-        if (!cancelled) setModelRate(rate);
+        if (cancelled) return;
+        // 数值无变化时保持旧引用：避免每 2s 触发整个面板（含终端列表、
+        // 项目树）无意义重渲染
+        setModelRate((prev) =>
+          prev &&
+          prev.tokensPerSecond === rate.tokensPerSecond &&
+          prev.outputTokens === rate.outputTokens &&
+          prev.sampleSeconds === rate.sampleSeconds &&
+          prev.totalTokens === rate.totalTokens &&
+          prev.lastDurationMs === rate.lastDurationMs &&
+          prev.lastModel === rate.lastModel
+            ? prev
+            : rate,
+        );
       } catch {
         // 后端尚未就绪，忽略本轮
       }
@@ -279,21 +442,35 @@ export function TerminalPanel({
         (item) => item.projectId === selectedProject.id || !item.projectId,
       )
     : instances;
-  const selected =
-    visibleInstances.find((item) => item.id === selectedId) ??
-    visibleInstances[0] ??
-    null;
+  // 选中终端解析：selectedId 为空（如删除选中终端后）时显示空态，
+  // 由用户点击列表项手动启动，避免删除瞬间自动弹出下一个终端会话。
+  const selected = selectedId
+    ? (instances.find((item) => item.id === selectedId) ?? null)
+    : null;
 
   // 选中终端持久化；列表变化时保证选中有效。
   // 注意：启动时 instances 先空后加载，空窗期不要清除已持久化的选中，等实例到位后再校验。
   useEffect(() => {
-    if (visibleInstances.length === 0) return;
-    if (!visibleInstances.some((item) => item.id === selectedId)) {
-      setSelectedId(visibleInstances[0].id);
-      hub.setActiveInstanceId(visibleInstances[0].id);
+    if (instances.length === 0) return;
+    if (!instances.some((item) => item.id === selectedId)) {
+      // 用户主动删除当前选中的终端：不自动切换/启动下一个终端，
+      // 由用户点击列表项手动启动（避免删除时弹出未预期的终端会话）
+      if (deletingRef.current === selectedId) {
+        deletingRef.current = null;
+        setSelectedId(null);
+        hub.setActiveInstanceId(null);
+        try {
+          window.localStorage.removeItem(SELECTED_STORAGE_KEY);
+        } catch {
+          // 忽略
+        }
+        return;
+      }
+      setSelectedId(instances[0].id);
+      hub.setActiveInstanceId(instances[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleInstances, selectedId]);
+  }, [instances, selectedId]);
 
   // 把当前选中写入 localStorage
   useEffect(() => {
@@ -307,7 +484,7 @@ export function TerminalPanel({
   }, [selected]);
 
   // 当前选中终端是否处于活跃会话（系统终端 pid 存活 或 内嵌 PTY 未退出）
-  const activeRunning = Boolean(selected) && hub.instanceActive(selected.id);
+  const activeRunning = selected !== null && hub.instanceActive(selected.id);
 
   const handleBrowse = async (): Promise<string | null> => {
     try {
@@ -329,6 +506,17 @@ export function TerminalPanel({
     hub.setActiveInstanceId(instance.id);
   };
 
+  /** 拖拽排序终端列表（顺序持久化到后端）。 */
+  const handleInstanceDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      hub.reorderInstances(String(active.id), String(over.id));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hub.reorderInstances],
+  );
+
   // 项目列表加载
   const loadProjects = useCallback(async () => {
     try {
@@ -344,14 +532,6 @@ export function TerminalPanel({
         }
         return valid;
       });
-      setExpandedProjectIds((prev) => {
-        const validIds = new Set(list.map((item) => item.id));
-        const next = new Set<string>();
-        prev.forEach((id) => {
-          if (validIds.has(id)) next.add(id);
-        });
-        return next;
-      });
     } catch (error) {
       console.error("[TerminalPanel] failed to load projects", error);
     }
@@ -361,11 +541,79 @@ export function TerminalPanel({
     void loadProjects();
   }, [loadProjects]);
 
+  /** 项目列表变化时同步展开集合：新项目默认展开，已删除的移除 */
+  useEffect(() => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      const ids = new Set<string>();
+      for (const project of projects) {
+        ids.add(project.id);
+        if (!next.has(project.id)) {
+          next.add(project.id);
+          changed = true;
+        }
+      }
+      for (const id of prev) {
+        if (!ids.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [projects]);
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  /** 拉取当前项目的 Git 更改文件（左栏底部区域展示）。 */
+  const loadGitStatus = useCallback(async () => {
+    const dir = selectedProject?.projectDir;
+    if (!dir) {
+      setGitStatus(null);
+      return;
+    }
+    try {
+      const result = await projectFilesApi.gitStatus(dir);
+      // 内容无变化时保持旧引用，避免轮询触发无意义重渲染
+      setGitStatus((prev) =>
+        prev &&
+        prev.git === result.git &&
+        prev.entries.length === result.entries.length &&
+        prev.entries.every(
+          (entry, index) =>
+            entry.path === result.entries[index]?.path &&
+            entry.raw === result.entries[index]?.raw,
+        )
+          ? prev
+          : result,
+      );
+    } catch {
+      setGitStatus(null);
+    }
+  }, [selectedProject?.projectDir]);
+
+  // Git 更改轮询：跟随选中项目切换，并持续刷新（编码过程中文件状态会变）
+  useEffect(() => {
+    void loadGitStatus();
+    const timer = window.setInterval(() => void loadGitStatus(), 8000);
+    return () => window.clearInterval(timer);
+  }, [loadGitStatus]);
+
   /** 选择项目即一键切换（应用供应商 + 恢复 Claude 配置快照 + 加载项目终端）。 */
   const handleApplyProject = async (id: string) => {
     const project = projects.find((item) => item.id === id);
     if (!project || projectBusy) return;
     setProjectBusy(true);
+    // 应用项目时展开该项目的终端分组
+    setExpandedIds((prev) => new Set(prev).add(project.id));
     try {
       const result = await projectApi.apply(id);
       setSelectedProjectId(id);
@@ -449,18 +697,6 @@ export function TerminalPanel({
     }
   };
 
-  const toggleProjectExpanded = (id: string) => {
-    setExpandedProjectIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
   /** 加载当前选中终端的历史会话列表（Claude Code / OpenCode）。 */
   const loadSessions = async (instance: TerminalInstance) => {
     if (!instance || !SESSION_TOOLS.includes(instance.tool)) return;
@@ -513,6 +749,63 @@ export function TerminalPanel({
     }
   };
 
+  /** 未归属任何项目的终端（兼容旧数据，树形「未分组」节点） */
+  const unassignedInstances = instances.filter(
+    (item) => !item.projectId || !projects.some((p) => p.id === item.projectId),
+  );
+
+  /** 树形子节点：某个分组下的终端列表（支持组内拖拽排序） */
+  const renderInstanceGroup = (
+    groupInstances: TerminalInstance[],
+  ): React.ReactNode => {
+    if (groupInstances.length === 0) {
+      return (
+        <p className="py-0.5 pl-7 pr-1.5 text-[10px] text-muted-foreground/70">
+          {t("terminalHub.groupEmpty", { defaultValue: "暂无终端" })}
+        </p>
+      );
+    }
+    return (
+      <DndContext
+        sensors={hub.sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleInstanceDragEnd}
+      >
+        <SortableContext
+          items={groupInstances.map((item) => item.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div className="space-y-0.5">
+            {groupInstances.map((instance) => {
+              const status = instanceAliveStatus(instance, hub);
+              const isSelected = selected?.id === instance.id;
+              const isContextTarget = contextMenu?.instance.id === instance.id;
+              return (
+                <SortableTerminalItem
+                  key={instance.id}
+                  instance={instance}
+                  status={status}
+                  isSelected={isSelected}
+                  isContextTarget={isContextTarget}
+                  onSelect={selectInstance}
+                  onContextMenu={(event, target) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setContextMenu({
+                      x: event.clientX,
+                      y: event.clientY,
+                      instance: target,
+                    });
+                  }}
+                />
+              );
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
+    );
+  };
+
   /** 左栏：标题栏 + 项目树（上半）+ 终端列表（下半）；支持折叠为窄条 */
   const renderLeftPanel = () => {
     if (leftCollapsed) {
@@ -532,6 +825,50 @@ export function TerminalPanel({
           >
             <PanelLeftOpen className="h-4 w-4" />
           </Button>
+          {/* 折叠模式精简终端列表：仅 icon，hover 显示名字，点击切换 */}
+          {visibleInstances.length > 0 && (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto pb-1">
+              {visibleInstances.map((instance) => {
+                const status = instanceAliveStatus(instance, hub);
+                const isSelected = selected?.id === instance.id;
+                return (
+                  <Tooltip key={instance.id} delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => selectInstance(instance)}
+                        className={cn(
+                          "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors",
+                          isSelected
+                            ? "border-primary/50 bg-primary/10"
+                            : "border-transparent hover:bg-muted",
+                        )}
+                      >
+                        {APP_ICON_MAP[instance.app as AppId]?.icon ?? (
+                          <TerminalSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
+                        <span
+                          className={cn(
+                            "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-background",
+                            status === "running"
+                              ? "bg-emerald-500"
+                              : status === "idle"
+                                ? "bg-amber-400"
+                                : "bg-muted-foreground/40",
+                          )}
+                        />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={8}>
+                      <span className="block max-w-[200px] truncate text-[11px]">
+                        {instance.name}
+                      </span>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
+          )}
           <span
             className="mt-2 text-[10px] font-medium text-muted-foreground"
             style={{ writingMode: "vertical-rl" }}
@@ -578,10 +915,39 @@ export function TerminalPanel({
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                title={t("terminalHub.expandAll", {
+                  defaultValue: "全部展开",
+                })}
+                disabled={projects.length === 0}
+                onClick={() =>
+                  setExpandedIds(new Set(projects.map((item) => item.id)))
+                }
+              >
+                <ChevronsDown className="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                title={t("terminalHub.collapseAll", {
+                  defaultValue: "全部收起",
+                })}
+                disabled={expandedIds.size === 0}
+                onClick={() => setExpandedIds(new Set())}
+              >
+                <ChevronsUp className="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
                 title={t("project.newDialog.title", {
                   defaultValue: "新建项目",
                 })}
-                onClick={() => setProjectDialogOpen(true)}
+                onClick={() => {
+                  setEditingProject(null);
+                  setProjectDialogOpen(true);
+                }}
               >
                 <Plus className="h-3 w-3" />
               </Button>
@@ -598,232 +964,247 @@ export function TerminalPanel({
               </Button>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-            {projects.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
-                {t("terminalHub.noProjects", {
-                  defaultValue: "还没有项目，点击右上角 + 新建一个",
-                })}
-              </div>
-            ) : (
-              <div className="space-y-0.5">
-                {projects.map((project) => {
-                  const expanded = expandedProjectIds.has(project.id);
-                  const isActive = selectedProject?.id === project.id;
-                  const toolEntries = Object.entries(project.tools ?? {});
-                  return (
-                    <div
-                      key={project.id}
-                      className={cn(
-                        "rounded-md transition-colors",
-                        isActive ? "text-primary" : "hover:bg-muted/40",
-                      )}
-                    >
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="p-1.5">
+              {/* 项目树：项目 → 终端 两级结构（点击项目应用并展开） */}
+              {projects.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
+                  {t("terminalHub.noProjects", {
+                    defaultValue: "还没有项目，点击右上角 + 新建一个",
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {projects.map((project) => {
+                    const isActive = selectedProject?.id === project.id;
+                    const toolCount = Object.keys(project.tools ?? {}).length;
+                    const expanded = expandedIds.has(project.id);
+                    const projectTerminals = instances.filter(
+                      (item) => item.projectId === project.id,
+                    );
+                    return (
+                      <div key={project.id}>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            if (!expanded) toggleExpanded(project.id);
+                            void handleApplyProject(project.id);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              void handleApplyProject(project.id);
+                            }
+                          }}
+                          className={cn(
+                            "group flex w-full cursor-pointer items-center gap-1 rounded-md px-1 py-1 text-left transition-colors",
+                            isActive
+                              ? "bg-primary/5 font-medium text-primary"
+                              : "hover:bg-muted/40",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleExpanded(project.id);
+                            }}
+                            title={
+                              expanded
+                                ? t("terminalHub.collapse", {
+                                    defaultValue: "收起",
+                                  })
+                                : t("terminalHub.expand", {
+                                    defaultValue: "展开",
+                                  })
+                            }
+                          >
+                            <ChevronRight
+                              className={cn(
+                                "h-3 w-3 transition-transform",
+                                expanded && "rotate-90",
+                              )}
+                            />
+                          </button>
+                          <FolderKanban
+                            className={cn(
+                              "h-3.5 w-3.5 shrink-0",
+                              projectBusy && isActive
+                                ? "animate-spin text-primary"
+                                : "text-muted-foreground",
+                            )}
+                          />
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                            {project.name}
+                          </span>
+                          {toolCount > 0 && (
+                            <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
+                              {toolCount}
+                            </span>
+                          )}
+                          {/* 行内操作：编辑项目 / 新建终端（归属该项目） */}
+                          <button
+                            type="button"
+                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setEditingProject(project);
+                              setProjectDialogOpen(true);
+                            }}
+                            title={t("project.newDialog.editTitle", {
+                              defaultValue: "编辑项目",
+                            })}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setNewTerminalProjectId(project.id);
+                              setNewOpen(true);
+                            }}
+                            title={t("terminalHub.newTerminalFor", {
+                              name: project.name,
+                              defaultValue: `为「${project.name}」新建终端`,
+                            })}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
+                        {expanded && (
+                          <div className="pb-0.5 pl-3.5 pr-0.5">
+                            {renderInstanceGroup(projectTerminals)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {/* 未归属项目的终端（兼容旧数据） */}
+                  {unassignedInstances.length > 0 && (
+                    <div>
                       <div
                         role="button"
                         tabIndex={0}
-                        onClick={() => void handleApplyProject(project.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            void handleApplyProject(project.id);
-                          }
-                        }}
-                        className={cn(
-                          "flex w-full cursor-pointer items-center gap-1.5 px-1.5 py-1 text-left",
-                          isActive && "font-medium",
-                        )}
-                        title={t("project.applyHint", {
-                          name: project.name,
-                          defaultValue: `应用项目「${project.name}」`,
-                        })}
+                        onClick={() => toggleExpanded(UNASSIGNED_GROUP_ID)}
+                        className="flex w-full cursor-pointer items-center gap-1 rounded-md px-1 py-1 text-left transition-colors hover:bg-muted/40"
                       >
-                        {!selectOnly && (
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleProjectExpanded(project.id);
-                            }}
-                            className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-                            aria-label={t("terminalHub.toggleProjectTree", {
-                              defaultValue: "展开或折叠项目",
-                            })}
-                          >
-                            {expanded ? (
-                              <ChevronDown className="h-3 w-3" />
-                            ) : (
-                              <ChevronRight className="h-3 w-3" />
+                        <button
+                          type="button"
+                          className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleExpanded(UNASSIGNED_GROUP_ID);
+                          }}
+                        >
+                          <ChevronRight
+                            className={cn(
+                              "h-3 w-3 transition-transform",
+                              expandedIds.has(UNASSIGNED_GROUP_ID) &&
+                                "rotate-90",
                             )}
-                          </button>
-                        )}
-                        <FolderKanban
-                          className={cn(
-                            "h-3.5 w-3.5 shrink-0",
-                            projectBusy
-                              ? "animate-spin text-primary"
-                              : "text-muted-foreground",
-                          )}
-                        />
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                          {project.name}
+                          />
+                        </button>
+                        <TerminalSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                          {t("terminalHub.unassigned", {
+                            defaultValue: "未分组终端",
+                          })}
                         </span>
-                        {toolEntries.length > 0 && (
-                          <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
-                            {toolEntries.length}
-                          </span>
-                        )}
+                        <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
+                          {unassignedInstances.length}
+                        </span>
                       </div>
-                      {expanded && !selectOnly && (
-                        <div className="pb-1 pl-7 pr-1">
-                          <p className="truncate font-mono text-[10px] text-muted-foreground/80">
-                            {project.projectDir}
-                          </p>
-                          {toolEntries.length > 0 && (
-                            <div className="mt-0.5 flex flex-wrap gap-1">
-                              {toolEntries.map(([tool, binding]) => (
-                                <span
-                                  key={tool}
-                                  className="rounded bg-muted/70 px-1.5 py-0.5 text-[9px] text-muted-foreground"
-                                  title={`${binding.providerId}`}
-                                >
-                                  {getAppLabel(tool)}
-                                  {binding.providerId
-                                    ? ` · ${binding.providerId}`
-                                    : ""}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          <div className="h-56">
-                            <ProjectFileBrowser
-                              projectDir={project.projectDir}
-                            />
-                          </div>
+                      {expandedIds.has(UNASSIGNED_GROUP_ID) && (
+                        <div className="pb-0.5 pl-3.5 pr-0.5">
+                          {renderInstanceGroup(unassignedInstances)}
                         </div>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="shrink-0 border-t border-border" />
-
-        {/* 终端列表（下半） */}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
-            <span className="text-[11px] font-medium text-muted-foreground">
-              {t("terminalHub.instances", { defaultValue: "终端列表" })}
-              {visibleInstances.length > 0
-                ? ` (${visibleInstances.length})`
-                : ""}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
-              onClick={() => setNewOpen(true)}
-              title={t("terminalHub.newTerminal", { defaultValue: "新建终端" })}
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-1.5 p-1.5">
-              {visibleInstances.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
-                  {selectedProject
-                    ? t("terminalHub.emptyForProject", {
-                        name: selectedProject.name,
-                        defaultValue:
-                          "该项目下还没有终端，点击右上角 + 新建一个。",
-                      })
-                    : t("terminalHub.empty", {
-                        defaultValue: "还没有终端，点击右上角 + 新建一个。",
-                      })}
+                  )}
                 </div>
-              ) : (
-                visibleInstances.map((instance) => {
-                  const status = instanceAliveStatus(instance, hub);
-                  const isSelected = selected?.id === instance.id;
-                  const isContextTarget =
-                    contextMenu?.instance.id === instance.id;
-                  return (
-                    <div
-                      key={instance.id}
-                      onClick={() => selectInstance(instance)}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setContextMenu({
-                          x: event.clientX,
-                          y: event.clientY,
-                          instance,
-                        });
-                      }}
-                      className={cn(
-                        "cursor-pointer rounded-lg border p-2 transition-colors",
-                        isSelected
-                          ? "border-primary/50 bg-primary/5"
-                          : "border-border/60 bg-muted/30 hover:border-border",
-                        isContextTarget && "border-border",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-1.5">
-                        <div className="flex min-w-0 items-center gap-2">
-                          {/* 应用 logo + 运行状态角标 */}
-                          <div className="relative shrink-0">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/80">
-                              {APP_ICON_MAP[instance.app as AppId]?.icon ?? (
-                                <TerminalSquare className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </div>
-                            <span
-                              className={cn(
-                                "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
-                                status === "running"
-                                  ? "bg-emerald-500"
-                                  : status === "idle"
-                                    ? "bg-amber-400"
-                                    : "bg-muted-foreground/40",
-                              )}
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-medium">
-                              {instance.name}
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-1.5">
-                              <span className="text-[10px] font-medium text-foreground/80">
-                                {TERMINAL_TOOL_LABEL[instance.tool]}
-                              </span>
-                              <span className="text-[9px] text-muted-foreground">
-                                {status === "running"
-                                  ? t("terminalHub.running", {
-                                      defaultValue: "运行中",
-                                    })
-                                  : status === "idle"
-                                    ? t("terminalHub.idle", {
-                                        defaultValue: "空闲",
-                                      })
-                                    : t("terminalHub.stopped", {
-                                        defaultValue: "已停止",
-                                      })}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
               )}
             </div>
           </ScrollArea>
         </div>
+
+        {/* 底部：Git 更改文件 */}
+        {!selectOnly && (
+          <div className="flex h-56 shrink-0 flex-col border-t border-border">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <GitBranch className="h-3 w-3" />
+                {t("terminalHub.gitChanges", { defaultValue: "Git 更改" })}
+                {gitStatus?.git && gitStatus.entries.length > 0
+                  ? ` (${gitStatus.entries.length})`
+                  : ""}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => void loadGitStatus()}
+                title={t("terminalHub.gitRefresh", { defaultValue: "刷新" })}
+              >
+                <RotateCcw className="h-3 w-3" />
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+              {!selectedProject ? (
+                <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                  {t("terminalHub.gitNoProject", {
+                    defaultValue: "选择一个项目后显示其 Git 更改",
+                  })}
+                </p>
+              ) : !gitStatus ? (
+                <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                  {t("terminalHub.gitLoading", { defaultValue: "加载中…" })}
+                </p>
+              ) : !gitStatus.git ? (
+                <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                  {t("terminalHub.gitNoRepo", {
+                    defaultValue: "当前项目不是 Git 仓库",
+                  })}
+                </p>
+              ) : gitStatus.error ? (
+                <p className="px-1 py-2 text-[11px] text-red-500/80">
+                  {gitStatus.error}
+                </p>
+              ) : gitStatus.entries.length === 0 ? (
+                <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                  {t("terminalHub.gitClean", {
+                    defaultValue: "工作区没有未提交的更改",
+                  })}
+                </p>
+              ) : (
+                <div className="space-y-0.5">
+                  {gitStatus.entries.map((entry) => (
+                    <div
+                      key={`${entry.raw}-${entry.path}`}
+                      className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40"
+                      title={`${entry.raw.trim() || "·"}  ${entry.path}`}
+                    >
+                      <span
+                        className={cn(
+                          "w-4 shrink-0 text-center font-mono text-[9px]",
+                          gitStatusColor(entry.raw),
+                        )}
+                      >
+                        {entry.raw.trim() || "·"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground/80">
+                        {entry.path}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -844,20 +1225,55 @@ export function TerminalPanel({
         <span className="min-w-0 flex-1 truncate px-1 font-mono text-[10px] text-muted-foreground">
           {selected?.projectDir ?? appLabel}
         </span>
-        {/* 当前调用模型的实时速率 */}
+        {/* 实时统计：输出速率 + 累计 token 消耗 + 最近请求耗时 */}
         <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-background/60 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-background/60 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
           title={
             modelRate && modelRate.outputTokens > 0
-              ? `${modelRate.lastModel ?? "未知模型"} · 最近 ${modelRate.sampleSeconds}s 输出 ${modelRate.outputTokens} tokens`
-              : "暂无模型调用流量（模型速率经本地代理统计）"
+              ? t("terminalHub.statsDetail", {
+                  model: modelRate.lastModel || "未知模型",
+                  window: modelRate.sampleSeconds,
+                  output: modelRate.outputTokens,
+                  total: formatTokenCount(modelRate.totalTokens),
+                  duration: formatDuration(modelRate.lastDurationMs),
+                })
+              : t("terminalHub.statsIdle")
           }
         >
           <Gauge className="h-3 w-3 text-emerald-500/80" />
           {modelRate && modelRate.outputTokens > 0
             ? `${modelRate.tokensPerSecond.toFixed(1)} tok/s`
             : "-- tok/s"}
+          {modelRate && modelRate.totalTokens > 0 && (
+            <>
+              <span className="h-2.5 w-px bg-border" />
+              {t("terminalHub.statsTotalTokens", {
+                total: formatTokenCount(modelRate.totalTokens),
+              })}
+            </>
+          )}
+          {modelRate && modelRate.lastDurationMs > 0 && (
+            <>
+              <span className="h-2.5 w-px bg-border" />
+              {t("terminalHub.statsLastDuration", {
+                time: formatDuration(modelRate.lastDurationMs),
+              })}
+            </>
+          )}
         </span>
+        {onHudRestore && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={t("terminalHub.restoreFullscreen", {
+              defaultValue: "还原大屏幕",
+            })}
+            onClick={onHudRestore}
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
         {selected && SESSION_TOOLS.includes(selected.tool) && (
           <DropdownMenu
             open={sessionsOpen}
@@ -984,7 +1400,7 @@ export function TerminalPanel({
   );
 
   return (
-    <>
+    <TooltipProvider delayDuration={200}>
       {/* 主布局：三栏式终端工作台（左：项目树+终端列表 / 中：终端 / 右：模型列表） */}
       <div className="flex h-full w-full overflow-hidden bg-background text-foreground">
         {renderLeftPanel()}
@@ -1079,14 +1495,20 @@ export function TerminalPanel({
       {newOpen && (
         <NewTerminalDialog
           open={newOpen}
-          onOpenChange={setNewOpen}
+          onOpenChange={(open) => {
+            setNewOpen(open);
+            if (!open) setNewTerminalProjectId(null);
+          }}
           appId={effectiveApp}
           appLabel={appLabel}
           projectDirs={hub.state.projectDirs}
           defaultProjectDir={
-            selectedProject?.projectDir ?? hub.state.lastProjectDir
+            projects.find((item) => item.id === newTerminalProjectId)
+              ?.projectDir ??
+            selectedProject?.projectDir ??
+            hub.state.lastProjectDir
           }
-          projectId={selectedProject?.id}
+          projectId={newTerminalProjectId ?? selectedProject?.id}
           availableTerminals={hub.availableTerminals}
           launchTemplates={launchTemplates}
           onBrowse={() => handleBrowse()}
@@ -1100,11 +1522,15 @@ export function TerminalPanel({
       {projectDialogOpen && (
         <NewProjectDialog
           open={projectDialogOpen}
-          onOpenChange={setProjectDialogOpen}
+          onOpenChange={(open) => {
+            setProjectDialogOpen(open);
+            if (!open) setEditingProject(null);
+          }}
           projectDirs={hub.state.projectDirs}
           defaultProjectDir={
             selectedProject?.projectDir ?? hub.state.lastProjectDir
           }
+          project={editingProject}
           onBrowse={() => handleBrowse()}
           onCreated={() => void loadProjects()}
         />
@@ -1123,6 +1549,9 @@ export function TerminalPanel({
         onConfirm={async () => {
           if (!confirmDelete) return;
           setDeletingId(confirmDelete.id);
+          // 标记删除进行中：删除选中终端后不自动切换/启动下一个终端，
+          // 避免删除瞬间面板弹出未预期的终端会话（由用户点击列表项启动）
+          deletingRef.current = confirmDelete.id;
           try {
             await hub.deleteTerminal(confirmDelete.id);
           } finally {
@@ -1147,6 +1576,6 @@ export function TerminalPanel({
         onConfirm={() => void handleDeleteProject()}
         onCancel={() => setConfirmDeleteProject(null)}
       />
-    </>
+    </TooltipProvider>
   );
 }

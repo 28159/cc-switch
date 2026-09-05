@@ -1663,6 +1663,7 @@ pub fn run() {
             terminal_workbench::close_embedded_terminal,
             terminal_workbench::list_projects,
             terminal_workbench::create_project,
+            terminal_workbench::update_project,
             terminal_workbench::delete_project,
             terminal_workbench::get_project_detail,
             terminal_workbench::apply_project,

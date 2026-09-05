@@ -2330,7 +2330,18 @@
       "sessionEmpty": "No resumable sessions found in this directory.",
       "sessionHint": "Picking a session appends its flag automatically to resume the {{tool}} context.",
       "terminal": "Terminal"
-    }
+    },
+    "restoreFullscreen": "Restore Full Screen",
+    "statsIdle": "No model traffic yet (rate is measured by the local proxy)",
+    "statsDetail": "{{model}} · {{output}} tokens output in last {{window}}s · {{total}} tok total · last request took {{duration}}",
+    "statsTotalTokens": "{{total}} tok total",
+    "statsLastDuration": "last {{time}}",
+    "gitChanges": "Git Changes",
+    "gitRefresh": "Refresh",
+    "gitNoProject": "Select a project to see its Git changes",
+    "gitLoading": "Loading…",
+    "gitNoRepo": "Current project is not a Git repository",
+    "gitClean": "No uncommitted changes"
   },
   "workspace": {
     "title": "Workspace Files",

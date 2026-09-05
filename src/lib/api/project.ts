@@ -27,7 +27,10 @@ export interface DevProject {
 export interface ProjectDetail extends DevProject {
   apps: Record<
     string,
-    { providers: Array<{ id: string; name: string; category: string }>; boundProviderId: string | null }
+    {
+      providers: Array<{ id: string; name: string; category: string }>;
+      boundProviderId: string | null;
+    }
   >;
 }
 
@@ -49,6 +52,14 @@ export const projectApi = {
     tools: ProjectTools;
   }): Promise<DevProject> {
     return invoke<DevProject>("create_project", args);
+  },
+
+  async update(args: {
+    id: string;
+    name: string;
+    projectDir: string;
+  }): Promise<DevProject> {
+    return invoke<DevProject>("update_project", args);
   },
 
   async remove(id: string): Promise<boolean> {

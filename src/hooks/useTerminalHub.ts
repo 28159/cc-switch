@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import {
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 
 import { terminalApi } from "@/lib/api/terminal";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -56,6 +63,16 @@ export function useTerminalHub() {
   const [embeddedExit, setEmbeddedExit] = useState<Record<string, boolean>>({});
   /** instanceId → 重置计数（递增触发内嵌会话重启） */
   const [resetNonce, setResetNonce] = useState<Record<string, number>>({});
+
+  // 拖拽排序传感器：8px 激活距离避免与点击/右键冲突
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   // 轮询与异步回调都要读到最新状态，用 ref 避免闭包读到旧值
   const stateRef = useRef(state);
@@ -113,7 +130,10 @@ export function useTerminalHub() {
         if (cancelled) return;
         attempt += 1;
         if (attempt <= MAX_RETRIES) {
-          retryTimer = window.setTimeout(() => void bootstrap(), RETRY_DELAY_MS);
+          retryTimer = window.setTimeout(
+            () => void bootstrap(),
+            RETRY_DELAY_MS,
+          );
         } else {
           toast.error(
             t("terminalHub.loadFailed", {
@@ -133,6 +153,40 @@ export function useTerminalHub() {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [applyState, t]);
+
+  // 窗口聚焦时重新拉取后端状态：HUD 与大屏是两个独立前端实例，各自只在
+  // 挂载时 bootstrap 一次。在 HUD 中新建/删除终端后切回大屏（或反之），
+  // 另一窗口的本地 state 仍是旧快照，导致两侧终端列表数量不一致。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        unlisten = await getCurrentWindow().onFocusChanged(({ payload }) => {
+          if (!payload) return;
+          void (async () => {
+            try {
+              const hub = await terminalApi.getState();
+              applyState({
+                ...stateRef.current,
+                ...hub,
+                instances: hub.instances ?? [],
+                projectDirs: hub.projectDirs ?? [],
+              });
+            } catch (error) {
+              console.error("[terminalHub] failed to reload on focus", error);
+            }
+          })();
+        });
+      } catch (error) {
+        console.error("[terminalHub] failed to watch window focus", error);
+      }
+    };
+    void setup();
+    return () => {
+      unlisten?.();
+    };
+  }, [applyState]);
 
   // 存活探测：只对有 PID 的实例轮询，避免无意义的 IPC
   const instancesRef = useRef(state.instances);
@@ -204,15 +258,14 @@ export function useTerminalHub() {
   /** 实例当前是否有活跃会话（系统终端 pid 存活或内嵌 pty 未退出）。 */
   const instanceActive = useCallback(
     (id: string): boolean => {
-      const instance = stateRef.current.instances.find((item) => item.id === id);
+      const instance = stateRef.current.instances.find(
+        (item) => item.id === id,
+      );
       if (!instance) return false;
       const embeddedOk =
-        typeof embeddedPtyRef.current[id] === "number" &&
-        !embeddedExit[id];
+        typeof embeddedPtyRef.current[id] === "number" && !embeddedExit[id];
       if (embeddedOk) return true;
-      return (
-        typeof instance.pid === "number" && alive[id] === "running"
-      );
+      return typeof instance.pid === "number" && alive[id] === "running";
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [alive, embeddedExit],
@@ -479,14 +532,16 @@ export function useTerminalHub() {
           return copy;
         });
       }
-      await openTerminal(id);
+      // 无内嵌会话：不再拉起系统原生终端窗口（避免重置时弹出无关窗口）。
+      // 已挂载的面板会话随 bumpReset 重新连接；未挂载的实例下次选中时自动新建。
+      bumpReset(id);
       toast.success(
         t("terminalHub.resetDone", {
           defaultValue: "终端已重新初始化",
         }),
       );
     },
-    [bumpReset, openTerminal, persist, registerEmbedded, setEmbeddedExited, t],
+    [bumpReset, persist, registerEmbedded, setEmbeddedExited, t],
   );
 
   /** 局部更新某个终端实例的字段（名称 / 附加参数等），并持久化。 */
@@ -503,12 +558,30 @@ export function useTerminalHub() {
     [persist],
   );
 
+  /** 拖拽排序终端实例（dnd-kit arrayMove 语义），并持久化。 */
+  const reorderInstances = useCallback(
+    (activeId: string, overId: string) => {
+      if (!activeId || activeId === overId) return;
+      const current = stateRef.current;
+      const ids = current.instances.map((item) => item.id);
+      const oldIndex = ids.indexOf(activeId);
+      const newIndex = ids.indexOf(overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+      void persist({
+        ...current,
+        instances: arrayMove(current.instances, oldIndex, newIndex),
+      });
+    },
+    [persist],
+  );
+
   return {
     loaded,
     state,
     alive,
     busyId,
     availableTerminals,
+    sensors,
     workspaceOpen: false,
     activeInstanceId,
     setWorkspaceOpen: (_open: boolean) => undefined,
@@ -523,6 +596,7 @@ export function useTerminalHub() {
     stopTerminal,
     resetTerminal,
     updateInstance,
+    reorderInstances,
     embeddedPty,
     embeddedExit,
     resetNonce,

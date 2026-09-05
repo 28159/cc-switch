@@ -2330,7 +2330,18 @@
       "sessionEmpty": "该目录下未找到可恢复的会话。",
       "sessionHint": "选择会话后会自动加入启动参数，恢复 {{tool}} 之前的对话上下文。",
       "terminal": "终端程序"
-    }
+    },
+    "restoreFullscreen": "还原大屏幕",
+    "statsIdle": "暂无模型调用流量（速率经本地代理统计）",
+    "statsDetail": "{{model}} · 最近 {{window}}s 输出 {{output}} tokens · 累计 {{total}} tok · 上次请求耗时 {{duration}}",
+    "statsTotalTokens": "累计 {{total}} tok",
+    "statsLastDuration": "上次 {{time}}",
+    "gitChanges": "Git 更改",
+    "gitRefresh": "刷新",
+    "gitNoProject": "选择一个项目后显示其 Git 更改",
+    "gitLoading": "加载中…",
+    "gitNoRepo": "当前项目不是 Git 仓库",
+    "gitClean": "工作区没有未提交的更改"
   },
   "workspace": {
     "title": "Workspace 文件管理",

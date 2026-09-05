@@ -274,6 +274,19 @@ function HudWindow() {
     };
   }, []);
 
+  /** 还原大屏幕：显示并聚焦主窗口，隐藏当前 HUD 小窗（复用隐藏而非销毁）。 */
+  const handleRestoreFullscreen = () => {
+    void writeInfoLog("[HUD] 请求还原大屏幕", { file: "frontend" }).catch(
+      () => undefined,
+    );
+    void (async () => {
+      await showMainWindow();
+      await getCurrentWindow()
+        .hide()
+        .catch(() => undefined);
+    })();
+  };
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <TerminalPanel
@@ -282,6 +295,7 @@ function HudWindow() {
         hudDraggable
         selectOnly
         onHeaderDragStart={handleHeaderDragStart}
+        onHudRestore={handleRestoreFullscreen}
       />
     </div>
   );

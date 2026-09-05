@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { projectApi } from "@/lib/api/project";
+import { projectApi, type DevProject } from "@/lib/api/project";
 import { cn } from "@/lib/utils";
 
 export interface NewProjectDialogProps {
@@ -30,6 +30,8 @@ export interface NewProjectDialogProps {
   defaultProjectDir?: string;
   onBrowse: () => Promise<string | null>;
   onCreated: () => void;
+  /** 传入则为编辑模式：预填并更新该项目 */
+  project?: DevProject | null;
 }
 
 export function NewProjectDialog({
@@ -39,6 +41,7 @@ export function NewProjectDialog({
   defaultProjectDir,
   onBrowse,
   onCreated,
+  project = null,
 }: NewProjectDialogProps) {
   const { t } = useTranslation();
 
@@ -47,12 +50,12 @@ export function NewProjectDialog({
   const [browsing, setBrowsing] = useState(false);
   const [pending, setPending] = useState(false);
 
-  // 打开时重置
+  // 打开时重置（编辑模式预填项目信息）
   useEffect(() => {
     if (!open) return;
-    setName("");
-    setProjectDir(defaultProjectDir ?? "");
-  }, [open, defaultProjectDir]);
+    setName(project?.name ?? "");
+    setProjectDir(project?.projectDir ?? defaultProjectDir ?? "");
+  }, [open, defaultProjectDir, project]);
 
   const dirOptions = useMemo(() => {
     const list = projectDirs.filter(Boolean);
@@ -77,12 +80,20 @@ export function NewProjectDialog({
     if (!canSubmit || pending) return;
     setPending(true);
     try {
-      // 不手动选择工具：后端会自动记录当前各 app 选中的供应商
-      await projectApi.create({
-        name: name.trim(),
-        projectDir: projectDir.trim(),
-        tools: {},
-      });
+      if (project) {
+        await projectApi.update({
+          id: project.id,
+          name: name.trim(),
+          projectDir: projectDir.trim(),
+        });
+      } else {
+        // 不手动选择工具：后端会自动记录当前各 app 选中的供应商
+        await projectApi.create({
+          name: name.trim(),
+          projectDir: projectDir.trim(),
+          tools: {},
+        });
+      }
       onCreated();
       onOpenChange(false);
     } finally {
@@ -100,13 +111,19 @@ export function NewProjectDialog({
       <DialogContent className="flex max-h-[85vh] max-w-lg flex-col overflow-hidden rounded-2xl">
         <DialogHeader className="shrink-0 border-b border-border/60 pb-4">
           <DialogTitle>
-            {t("project.newDialog.title", { defaultValue: "新建项目" })}
+            {project
+              ? t("project.newDialog.editTitle", { defaultValue: "编辑项目" })
+              : t("project.newDialog.title", { defaultValue: "新建项目" })}
           </DialogTitle>
           <DialogDescription>
-            {t("project.newDialog.description", {
-              defaultValue:
-                "把 Claude Code 当前的供应商、MCP、Skills、记忆文件保存为一个项目，之后可一键切换。",
-            })}
+            {project
+              ? t("project.newDialog.editDescription", {
+                  defaultValue: "修改项目名称与项目目录。",
+                })
+              : t("project.newDialog.description", {
+                  defaultValue:
+                    "把 Claude Code 当前的供应商、MCP、Skills、记忆文件保存为一个项目，之后可一键切换。",
+                })}
           </DialogDescription>
         </DialogHeader>
 
@@ -171,7 +188,9 @@ export function NewProjectDialog({
 
           <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-muted/20 p-3">
             <FolderKanban
-              className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground")}
+              className={cn(
+                "mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground",
+              )}
             />
             <p className="text-[11px] leading-relaxed text-muted-foreground">
               {t("project.newDialog.captureHint", {
@@ -194,7 +213,9 @@ export function NewProjectDialog({
             onClick={() => void handleSubmit()}
             disabled={!canSubmit || pending}
           >
-            {t("project.newDialog.create", { defaultValue: "创建项目" })}
+            {project
+              ? t("common.save", { defaultValue: "保存" })
+              : t("project.newDialog.create", { defaultValue: "创建项目" })}
           </Button>
         </DialogFooter>
       </DialogContent>
