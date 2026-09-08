@@ -130,7 +130,7 @@ export const terminalApi = {
   },
 };
 
-/** 模型实时速率信息 */
+/** 模型实时速率 / 用量信息 */
 export interface ModelRateInfo {
   /** 窗口内的平均输出速率（tokens/sec） */
   tokensPerSecond: number;
@@ -144,4 +144,18 @@ export interface ModelRateInfo {
   lastDurationMs: number;
   /** 最近一次请求的模型名 */
   lastModel?: string | null;
+  /** 最近一次请求的输入 token（= 上下文长度） */
+  lastInputTokens: number;
+  /** 最近一次请求的输出 token */
+  lastOutputTokens: number;
+  /** 最近一次请求的真实速率（token/s） */
+  lastSpeedTokS: number;
+  /** 会话累计输入 / 输出 / 缓存用量（进程启动以来） */
+  sessionInputTokens: number;
+  sessionOutputTokens: number;
+  sessionCacheTokens: number;
+  /** 当前是否有流式输出在途（近 3s 内有文本增量） */
+  generating: boolean;
+  /** 生成中的实时速率（字符级近似 token/s） */
+  liveSpeedTokS: number;
 }

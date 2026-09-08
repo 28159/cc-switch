@@ -82,6 +82,7 @@ const SESSION_ARG_TOKENS = new Set([
   "--continue",
   "-c",
   "-r",
+  "-s",
 ]);
 
 /** 在参数串里替换/追加会话标记。 */

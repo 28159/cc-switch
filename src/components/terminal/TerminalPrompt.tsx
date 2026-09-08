@@ -120,10 +120,13 @@ export function TerminalPrompt({ getPtyId }: TerminalPromptProps) {
       toast.error("当前终端会话不可用，请先启动终端");
       return;
     }
+    // 换行统一成 \r\n：cmd/ConPTY 只认回车执行，裸 \n 会打断当前行，
+    // 表现为多行命令被截断（只有第一行生效、其余错位）。
+    const payload = content.replace(/\r\n|\r|\n/g, "\r\n");
     // 先写内容，延迟后再补回车（避免整段被当粘贴文本，回车变成换行）
     void (async () => {
       try {
-        await terminalApi.writeEmbedded(ptyId, content);
+        await terminalApi.writeEmbedded(ptyId, payload);
         await new Promise((resolve) => setTimeout(resolve, 150));
         await terminalApi.writeEmbedded(ptyId, "\r");
       } catch (error) {
@@ -179,18 +182,19 @@ export function TerminalPrompt({ getPtyId }: TerminalPromptProps) {
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            // 统一 Ctrl/⌘+Enter 发送（与展开态一致），避免回车误发
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
               event.preventDefault();
               handleSend();
             }
           }}
-          placeholder="输入要发送到终端的内容"
+          placeholder="输入要发送到终端的内容（Ctrl/⌘+Enter 发送）"
           className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:border-foreground/40 focus:outline-none"
         />
         <button
           type="button"
           onClick={handleSend}
-          title="发送到终端（Enter）"
+          title="发送到终端（Ctrl/⌘ + Enter）"
           className="flex h-6 shrink-0 items-center gap-1 rounded-md bg-emerald-600/90 px-2.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           disabled={!text.trim()}
         >

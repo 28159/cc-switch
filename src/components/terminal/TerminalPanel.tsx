@@ -63,6 +63,7 @@ import {
 } from "@/hooks/useTerminalHub";
 import { NewTerminalDialog } from "./NewTerminalDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
+import { FileEditorDialog } from "./FileEditorDialog";
 import { projectFilesApi, type GitStatusResult } from "@/lib/api/projectFiles";
 import {
   type TerminalInstance,
@@ -182,6 +183,7 @@ const SESSION_ARG_TOKENS = new Set([
   "--continue",
   "-c",
   "-r",
+  "-s",
 ]);
 
 /** 在参数串里替换/追加会话标记。 */
@@ -239,6 +241,20 @@ function gitStatusColor(raw: string): string {
   if (raw.includes("M")) return "text-amber-500";
   if (raw.includes("R")) return "text-sky-500";
   return "text-muted-foreground";
+}
+
+/** git status 两位码 → 可读说明（tooltip 用）。?? 表示未跟踪文件，不是文件名。 */
+function gitStatusLabel(raw: string): string {
+  const code = raw.trim();
+  if (code === "??") return "未跟踪 (untracked)";
+  if (code.includes("U") || code.includes("DD") || code.includes("AA"))
+    return "冲突 (conflict)";
+  if (code.includes("A")) return "已暂存新增 (added)";
+  if (code.includes("R")) return "已重命名 (renamed)";
+  if (code.includes("C")) return "已复制 (copied)";
+  if (code.includes("M")) return "已修改 (modified)";
+  if (code.includes("D")) return "已删除 (deleted)";
+  return code || "变更 (changed)";
 }
 
 /** 实例存活状态：内嵌会话（后端 PTY）优先，其次系统终端 pid 轮询结果。 */
@@ -383,9 +399,23 @@ export function TerminalPanel({
     y: number;
     instance: TerminalInstance;
   } | null>(null);
+  /** Git 更改点击 → 文件差异 / 编辑对话框 */
+  const [editorFile, setEditorFile] = useState<{
+    filePath: string;
+    projectDir: string;
+  } | null>(null);
+  /** 项目右键菜单（编辑 / 删除） */
+  const [projectContextMenu, setProjectContextMenu] = useState<{
+    x: number;
+    y: number;
+    project: DevProject;
+  } | null>(null);
 
   useEffect(() => {
-    const close = () => setContextMenu(null);
+    const close = () => {
+      setContextMenu(null);
+      setProjectContextMenu(null);
+    };
     window.addEventListener("click", close);
     window.addEventListener("contextmenu", close);
     window.addEventListener("blur", close);
@@ -412,7 +442,15 @@ export function TerminalPanel({
           prev.sampleSeconds === rate.sampleSeconds &&
           prev.totalTokens === rate.totalTokens &&
           prev.lastDurationMs === rate.lastDurationMs &&
-          prev.lastModel === rate.lastModel
+          prev.lastModel === rate.lastModel &&
+          prev.lastInputTokens === rate.lastInputTokens &&
+          prev.lastOutputTokens === rate.lastOutputTokens &&
+          prev.lastSpeedTokS === rate.lastSpeedTokS &&
+          prev.sessionInputTokens === rate.sessionInputTokens &&
+          prev.sessionOutputTokens === rate.sessionOutputTokens &&
+          prev.sessionCacheTokens === rate.sessionCacheTokens &&
+          prev.generating === rate.generating &&
+          prev.liveSpeedTokS === rate.liveSpeedTokS
             ? prev
             : rate,
         );
@@ -600,11 +638,25 @@ export function TerminalPanel({
     }
   }, [selectedProject?.projectDir]);
 
-  // Git 更改轮询：跟随选中项目切换，并持续刷新（编码过程中文件状态会变）
+  // Git 更改轮询：跟随选中项目切换，并持续刷新（编码过程中文件状态会变）。
+  // 窗口失焦/隐藏时跳过轮询，聚焦时立即刷新一次——避免后台也每 8s 拉起
+  // git 进程（浪费 CPU/IO，且曾是控制台窗口反复弹出的来源）。
   useEffect(() => {
-    void loadGitStatus();
-    const timer = window.setInterval(() => void loadGitStatus(), 8000);
-    return () => window.clearInterval(timer);
+    const active = () => !document.hidden && document.hasFocus();
+    const poll = () => {
+      if (!active()) return;
+      void loadGitStatus();
+    };
+    poll();
+    const handleFocus = () => {
+      if (active()) void loadGitStatus();
+    };
+    window.addEventListener("focus", handleFocus);
+    const timer = window.setInterval(poll, 8000);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.clearInterval(timer);
+    };
   }, [loadGitStatus]);
 
   /** 选择项目即一键切换（应用供应商 + 恢复 Claude 配置快照 + 加载项目终端）。 */
@@ -900,17 +952,6 @@ export function TerminalPanel({
               {t("terminalHub.projects", { defaultValue: "项目" })}
             </span>
             <div className="flex items-center gap-0.5">
-              {selectedProject && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-red-500"
-                  title={t("project.delete", { defaultValue: "删除项目" })}
-                  onClick={() => setConfirmDeleteProject(selectedProject)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -997,6 +1038,15 @@ export function TerminalPanel({
                               void handleApplyProject(project.id);
                             }
                           }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setProjectContextMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              project,
+                            });
+                          }}
                           className={cn(
                             "group flex w-full cursor-pointer items-center gap-1 rounded-md px-1 py-1 text-left transition-colors",
                             isActive
@@ -1044,21 +1094,7 @@ export function TerminalPanel({
                               {toolCount}
                             </span>
                           )}
-                          {/* 行内操作：编辑项目 / 新建终端（归属该项目） */}
-                          <button
-                            type="button"
-                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setEditingProject(project);
-                              setProjectDialogOpen(true);
-                            }}
-                            title={t("project.newDialog.editTitle", {
-                              defaultValue: "编辑项目",
-                            })}
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
+                          {/* 行内操作：新建终端（归属该项目）；编辑/删除在右键菜单 */}
                           <button
                             type="button"
                             className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
@@ -1184,8 +1220,15 @@ export function TerminalPanel({
                   {gitStatus.entries.map((entry) => (
                     <div
                       key={`${entry.raw}-${entry.path}`}
-                      className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40"
-                      title={`${entry.raw.trim() || "·"}  ${entry.path}`}
+                      className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40"
+                      title={`${gitStatusLabel(entry.raw)} · ${entry.path}`}
+                      onClick={() => {
+                        if (!selectedProject) return;
+                        setEditorFile({
+                          filePath: `${selectedProject.projectDir}/${entry.path}`,
+                          projectDir: selectedProject.projectDir,
+                        });
+                      }}
                     >
                       <span
                         className={cn(
@@ -1225,15 +1268,22 @@ export function TerminalPanel({
         <span className="min-w-0 flex-1 truncate px-1 font-mono text-[10px] text-muted-foreground">
           {selected?.projectDir ?? appLabel}
         </span>
-        {/* 实时统计：输出速率 + 累计 token 消耗 + 最近请求耗时 */}
+        {/* 实时统计：输出速率（生成中实时/上次请求）+ 上下文长度 + 会话用量 */}
         <span
           className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-background/60 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
           title={
-            modelRate && modelRate.outputTokens > 0
+            modelRate &&
+            (modelRate.lastInputTokens > 0 ||
+              modelRate.sessionInputTokens > 0 ||
+              modelRate.totalTokens > 0)
               ? t("terminalHub.statsDetail", {
                   model: modelRate.lastModel || "未知模型",
                   window: modelRate.sampleSeconds,
-                  output: modelRate.outputTokens,
+                  output: formatTokenCount(modelRate.outputTokens),
+                  context: formatTokenCount(modelRate.lastInputTokens),
+                  sessionIn: formatTokenCount(modelRate.sessionInputTokens),
+                  sessionOut: formatTokenCount(modelRate.sessionOutputTokens),
+                  cache: formatTokenCount(modelRate.sessionCacheTokens),
                   total: formatTokenCount(modelRate.totalTokens),
                   duration: formatDuration(modelRate.lastDurationMs),
                 })
@@ -1241,25 +1291,43 @@ export function TerminalPanel({
           }
         >
           <Gauge className="h-3 w-3 text-emerald-500/80" />
-          {modelRate && modelRate.outputTokens > 0
-            ? `${modelRate.tokensPerSecond.toFixed(1)} tok/s`
-            : "-- tok/s"}
-          {modelRate && modelRate.totalTokens > 0 && (
+          {modelRate?.generating ? (
+            <span className="inline-flex items-center gap-1 text-amber-500">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+              {t("terminalHub.statsLiveSpeed", {
+                speed: modelRate.liveSpeedTokS.toFixed(0),
+                defaultValue: "~{{speed}} tok/s",
+              })}
+            </span>
+          ) : modelRate && modelRate.lastDurationMs > 0 ? (
+            t("terminalHub.statsSpeed", {
+              speed: modelRate.lastSpeedTokS.toFixed(1),
+              defaultValue: "上次 {{speed}} tok/s",
+            })
+          ) : (
+            "-- tok/s"
+          )}
+          {modelRate && modelRate.lastInputTokens > 0 && (
             <>
               <span className="h-2.5 w-px bg-border" />
-              {t("terminalHub.statsTotalTokens", {
-                total: formatTokenCount(modelRate.totalTokens),
+              {t("terminalHub.statsContext", {
+                tokens: formatTokenCount(modelRate.lastInputTokens),
+                defaultValue: "上下文 {{tokens}}",
               })}
             </>
           )}
-          {modelRate && modelRate.lastDurationMs > 0 && (
-            <>
-              <span className="h-2.5 w-px bg-border" />
-              {t("terminalHub.statsLastDuration", {
-                time: formatDuration(modelRate.lastDurationMs),
-              })}
-            </>
-          )}
+          {modelRate &&
+            (modelRate.sessionInputTokens > 0 ||
+              modelRate.sessionOutputTokens > 0) && (
+              <>
+                <span className="h-2.5 w-px bg-border" />
+                {t("terminalHub.statsSessionUsage", {
+                  input: formatTokenCount(modelRate.sessionInputTokens),
+                  output: formatTokenCount(modelRate.sessionOutputTokens),
+                  defaultValue: "用量 {{input}}/{{output}}",
+                })}
+              </>
+            )}
         </span>
         {onHudRestore && (
           <Button
@@ -1492,6 +1560,55 @@ export function TerminalPanel({
           );
         })()}
 
+      {projectContextMenu &&
+        (() => {
+          const { x, y, project } = projectContextMenu;
+          const menuWidth = 176;
+          const menuHeight = 112;
+          const left = Math.max(
+            8,
+            Math.min(x, window.innerWidth - menuWidth - 8),
+          );
+          const top = Math.max(
+            8,
+            Math.min(y, window.innerHeight - menuHeight - 8),
+          );
+          return (
+            <div
+              className="fixed z-50 w-44 overflow-hidden rounded-lg border border-border bg-popover p-1 shadow-xl"
+              style={{ left, top }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectContextMenu(null);
+                  setEditingProject(project);
+                  setProjectDialogOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted"
+              >
+                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("project.newDialog.editTitle", {
+                  defaultValue: "编辑项目",
+                })}
+              </button>
+              <div className="my-1 h-px bg-border" />
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectContextMenu(null);
+                  setConfirmDeleteProject(project);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-500 transition-colors hover:bg-red-500/10"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("project.delete", { defaultValue: "删除项目" })}
+              </button>
+            </div>
+          );
+        })()}
+
       {newOpen && (
         <NewTerminalDialog
           open={newOpen}
@@ -1535,6 +1652,15 @@ export function TerminalPanel({
           onCreated={() => void loadProjects()}
         />
       )}
+
+      {/* Git 更改点击 → 差异 / 编辑 */}
+      <FileEditorDialog
+        open={Boolean(editorFile)}
+        filePath={editorFile?.filePath ?? ""}
+        projectDir={editorFile?.projectDir ?? ""}
+        initialView="diff"
+        onClose={() => setEditorFile(null)}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(confirmDelete)}

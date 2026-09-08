@@ -492,15 +492,25 @@ pub fn attach_embedded_terminal(
     pty_id: u64,
     on_data: tauri::ipc::Channel<EmbeddedOutputEvent>,
 ) -> Result<(), String> {
-    let sessions = EMBEDDED.lock().unwrap();
-    let session = sessions
-        .get(&pty_id)
-        .ok_or_else(|| "内嵌终端不存在或已关闭".to_string())?;
+    // 只取会话的共享句柄后立即释放全局锁：回放历史可能很大（上限 2MB），
+    // 若在锁内同步发送会阻塞其它终端命令（写入 / 调整尺寸 / 新建），
+    // 表现为「进入终端卡一下」。
+    let (history, listeners, exited) = {
+        let sessions = EMBEDDED.lock().unwrap();
+        let session = sessions
+            .get(&pty_id)
+            .ok_or_else(|| "内嵌终端不存在或已关闭".to_string())?;
+        (
+            session.history.clone(),
+            session.listeners.clone(),
+            session.exited.clone(),
+        )
+    };
     let (tx, rx) = std::sync::mpsc::channel::<EmbeddedOutputEvent>();
     {
         // 加锁顺序与读线程一致：先 history 后 listeners
-        let history = session.history.lock().unwrap();
-        let mut listeners = session.listeners.lock().unwrap();
+        let history = history.lock().unwrap();
+        let mut listeners = listeners.lock().unwrap();
         for chunk in history.chunks(256 * 1024) {
             if on_data
                 .send(EmbeddedOutputEvent::Data {
@@ -511,7 +521,7 @@ pub fn attach_embedded_terminal(
                 return Err("连接已断开".to_string());
             }
         }
-        if session.exited.load(Ordering::Relaxed) {
+        if exited.load(Ordering::Relaxed) {
             let _ = on_data.send(EmbeddedOutputEvent::Exit { code: None });
         } else {
             listeners.push(tx);
@@ -1295,6 +1305,8 @@ fn claude_sessions(project_dir: Option<&str>) -> Vec<ToolSessionInfo> {
 }
 
 /// 收集 OpenCode session JSON（~/.local/share/opencode 项目级 + 全局）。
+/// 旧版 opencode 才有 JSON；新版一律走 `opencode.db`（见 opencode_db_sessions）。
+/// 递归遍历是为了兼容 `storage/session/<项目哈希>/ses_*.json` 这类嵌套布局。
 fn collect_opencode_sessions(session_dir: &Path, out: &mut Vec<ToolSessionInfo>) {
     if !session_dir.is_dir() {
         return;
@@ -1304,6 +1316,13 @@ fn collect_opencode_sessions(session_dir: &Path, out: &mut Vec<ToolSessionInfo>)
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_dir() {
+            collect_opencode_sessions(&path, out);
+            continue;
+        }
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
@@ -1336,7 +1355,7 @@ fn collect_opencode_sessions(session_dir: &Path, out: &mut Vec<ToolSessionInfo>)
                 .map(|s| truncate_title(s))
                 .filter(|s| !s.is_empty()),
             last_active_at: if created > 0 {
-                Some(iso_from_secs(created))
+                Some(iso_from_ms(created))
             } else {
                 None
             },
@@ -1350,24 +1369,112 @@ fn collect_opencode_sessions(session_dir: &Path, out: &mut Vec<ToolSessionInfo>)
     }
 }
 
-fn iso_from_secs(secs: i64) -> String {
+/// epoch 毫秒 → ISO8601 UTC 展示串（civil_from_days 算法，正确处理闰年）。
+fn iso_from_ms(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let millis = ms.rem_euclid(1000);
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);
-    let year = days / 365 + 1970;
-    let month = (days % 365) / 30 + 1;
-    let day = days % 30 + 1;
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z",
-        year,
-        month,
-        day,
-        rem / 3600,
-        (rem % 3600) / 60,
-        rem % 60
-    )
+    let (hour, min, sec) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let yy = if m <= 2 { y + 1 } else { y };
+    format!("{yy:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z")
+}
+
+/// 按项目目录过滤会话（大小写不敏感，`\` 归一为 `/`）。
+fn filter_by_project(
+    found: Vec<ToolSessionInfo>,
+    project_dir: Option<&str>,
+) -> Vec<ToolSessionInfo> {
+    let target = project_dir.map(|p| p.replace('\\', "/").to_ascii_lowercase());
+    match target {
+        Some(t) if !t.is_empty() => found
+            .into_iter()
+            .filter(|s| {
+                s.project_dir
+                    .as_deref()
+                    .map(|p| p.replace('\\', "/").to_ascii_lowercase())
+                    .map(|p| p == t || p.starts_with(&format!("{t}/")))
+                    .unwrap_or(false)
+            })
+            .collect(),
+        _ => found,
+    }
+}
+
+/// 从 OpenCode 的 SQLite 会话库读最近会话。OpenCode ≥ 0.3 把会话存在
+/// `~/.local/share/opencode/opencode.db`，不再是 JSON 文件；WAL 模式并发读
+/// 安全，用只读打开避免干扰运行中的 opencode。
+fn opencode_db_sessions(project_dir: Option<&str>) -> Vec<ToolSessionInfo> {
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+    let db_path = home
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("opencode.db");
+    if !db_path.is_file() {
+        return Vec::new();
+    }
+    let conn = match rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT id, title, directory, time_updated \
+         FROM session \
+         WHERE time_archived IS NULL \
+         ORDER BY time_updated DESC \
+         LIMIT 50",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<i64>>(3)?,
+        ))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+    let mut found = Vec::new();
+    for row in rows.flatten() {
+        let (id, title, directory, updated_ms) = row;
+        found.push(ToolSessionInfo {
+            session_id: id,
+            title: title
+                .as_deref()
+                .map(truncate_title)
+                .filter(|s| !s.is_empty()),
+            last_active_at: updated_ms.map(iso_from_ms),
+            project_dir: directory,
+        });
+    }
+    filter_by_project(found, project_dir)
 }
 
 fn opencode_sessions(project_dir: Option<&str>) -> Vec<ToolSessionInfo> {
+    // 新版 opencode 会话全在 SQLite；JSON 文件扫描只作旧版本兜底。
+    let from_db = opencode_db_sessions(project_dir);
+    if !from_db.is_empty() {
+        return from_db;
+    }
     let Some(home) = home_dir() else {
         return Vec::new();
     };
@@ -1388,22 +1495,7 @@ fn opencode_sessions(project_dir: Option<&str>) -> Vec<ToolSessionInfo> {
         }
     }
     collect_opencode_sessions(&root.join("storage").join("session"), &mut found);
-
-    let target = project_dir.map(|p| p.replace('\\', "/").to_ascii_lowercase());
-    let filtered = match target {
-        Some(t) if !t.is_empty() => found
-            .into_iter()
-            .filter(|s| {
-                s.project_dir
-                    .as_deref()
-                    .map(|p| p.replace('\\', "/").to_ascii_lowercase())
-                    .map(|p| p == t || p.starts_with(&format!("{t}/")))
-                    .unwrap_or(false)
-            })
-            .collect(),
-        _ => found,
-    };
-    filtered
+    filter_by_project(found, project_dir)
 }
 
 #[tauri::command]
@@ -1583,11 +1675,13 @@ pub fn write_project_file(path: String, content: String) -> Result<bool, String>
 }
 
 fn run_git(root: &Path, args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|e| e.to_string());
+    // GUI 应用（windows_subsystem = "windows"）无控制台，直接拉 git.exe 会被
+    // Windows 新建控制台窗口（git status 每 8s 轮询 → 反复弹出黑窗）；必须静默。
+    let mut command = Command::new("git");
+    command.args(args).current_dir(root);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command.output().map_err(|e| e.to_string());
     match output {
         Ok(o) => (
             o.status.code().unwrap_or(1),

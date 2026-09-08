@@ -768,6 +768,12 @@ pub fn create_logged_passthrough_stream(
                                                 Some(c) if c.should_collect(data) => {
                                                     match serde_json::from_str::<Value>(data) {
                                                         Ok(json_value) => {
+                                                            // 实时速率：每个事件到达即累计文本增量，
+                                                            // 生成中即可显示近似 tok/s（权威计数仍以
+                                                            // 请求结束时的 usage 为准）
+                                                            super::usage::rate::record_live_delta(
+                                                                &json_value,
+                                                            );
                                                             c.push(json_value).await;
                                                             true
                                                         }

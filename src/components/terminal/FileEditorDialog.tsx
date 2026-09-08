@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -32,6 +32,8 @@ interface FileEditorDialogProps {
   filePath: string;
   projectDir: string;
   onClose: () => void;
+  /** 初始视图：编辑 或 差异（从 Git 更改点击进入时传 "diff"） */
+  initialView?: "edit" | "diff";
 }
 
 /** 按扩展名选择 CodeMirror 语言扩展 */
@@ -144,6 +146,7 @@ export function FileEditorDialog({
   filePath,
   projectDir,
   onClose,
+  initialView = "edit",
 }: FileEditorDialogProps) {
   const { t } = useTranslation();
   const isDark = useDarkMode();
@@ -152,7 +155,7 @@ export function FileEditorDialog({
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [viewMode, setViewMode] = useState<"edit" | "diff">("edit");
+  const [viewMode, setViewMode] = useState<"edit" | "diff">(initialView);
   const [diffResult, setDiffResult] = useState<{
     diff: string;
     untracked?: boolean;
@@ -169,7 +172,7 @@ export function FileEditorDialog({
   useEffect(() => {
     if (!open || !filePath) return;
     setLoading(true);
-    setViewMode("edit");
+    setViewMode(initialView);
     setDiffResult(null);
     projectFilesApi
       .readFile(filePath)
@@ -178,7 +181,41 @@ export function FileEditorDialog({
         toast.error(String(error ?? ""));
       })
       .finally(() => setLoading(false));
-  }, [open, filePath]);
+  }, [open, filePath, initialView]);
+
+  // 差异视图下自动加载 diff（初始即 diff / 点「差异」按钮进入 / 从编辑切回）
+  useEffect(() => {
+    if (!open || !filePath || viewMode !== "diff" || diffResult !== null || diffLoading) return;
+    void loadDiff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, filePath, viewMode, diffResult, diffLoading]);
+
+  const loadDiff = useCallback(async () => {
+    setDiffLoading(true);
+    try {
+      const result = await projectFilesApi.gitDiff(projectDir, filePath);
+      if (!result.git) {
+        toast.info(
+          t("projectFile.notGitRepo", {
+            defaultValue: "该目录不是 Git 仓库",
+          }),
+        );
+        // 非 git 仓库无法对比，退回编辑视图（避免自动加载死循环）
+        setViewMode("edit");
+        return;
+      }
+      setDiffResult({
+        diff: result.diff,
+        untracked: result.untracked,
+        content: result.content,
+      });
+    } catch (error) {
+      toast.error(String(error ?? ""));
+      setViewMode("edit");
+    } finally {
+      setDiffLoading(false);
+    }
+  }, [projectDir, filePath, t]);
 
   // 创建 CodeMirror 编辑器（打开后初始化，内容变化同步回 state；主题切换时重建）
   useEffect(() => {
@@ -216,31 +253,6 @@ export function FileEditorDialog({
     }
   };
 
-  const handleShowDiff = async () => {
-    setDiffLoading(true);
-    try {
-      const result = await projectFilesApi.gitDiff(projectDir, filePath);
-      if (!result.git) {
-        toast.info(
-          t("projectFile.notGitRepo", {
-            defaultValue: "该目录不是 Git 仓库",
-          }),
-        );
-        return;
-      }
-      setDiffResult({
-        diff: result.diff,
-        untracked: result.untracked,
-        content: result.content,
-      });
-      setViewMode("diff");
-    } catch (error) {
-      toast.error(String(error ?? ""));
-    } finally {
-      setDiffLoading(false);
-    }
-  };
-
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
@@ -262,7 +274,7 @@ export function FileEditorDialog({
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
-              onClick={() => void handleShowDiff()}
+              onClick={() => setViewMode("diff")}
               disabled={diffLoading}
               title={t("projectFile.showDiff", {
                 defaultValue: "查看 Git 差异",
