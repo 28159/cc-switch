@@ -53,6 +53,11 @@ export const settingsApi = {
     return await invoke("restart_app");
   },
 
+  /** 恢复出厂：停代理/还原 Live 配置 → 备份数据库 → 清空用户数据 → 重启应用 */
+  async factoryReset(): Promise<void> {
+    await invoke("factory_reset");
+  },
+
   async installUpdateAndRestart(): Promise<boolean> {
     return await invoke("install_update_and_restart");
   },

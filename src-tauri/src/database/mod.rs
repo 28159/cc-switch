@@ -292,4 +292,65 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(count == 0)
     }
+
+    /// 恢复出厂：清空所有用户配置数据（供应商、项目方案、提示词、MCP、
+    /// 自定义端点、代理接管/备份、用量与会话记录、DB settings 键值），
+    /// 并把 proxy_config 重置为与 schema.rs seed 一致的出厂默认行。
+    ///
+    /// 保留：model_pricing（种子数据，启动时会重播种）、skills / skill_repos
+    /// （技能内容而非配置）。调用方应先完成数据库备份、停止代理并还原
+    /// Live 配置。
+    pub fn factory_reset_user_data(&self) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        const USER_TABLES: [&str; 13] = [
+            "providers",
+            "profiles",
+            "prompts",
+            "mcp_servers",
+            "provider_endpoints",
+            "provider_health",
+            "proxy_live_backup",
+            "proxy_request_logs",
+            "session_log_sync",
+            "session_usage_dedup",
+            "stream_check_logs",
+            "usage_daily_rollups",
+            "settings",
+        ];
+        for table in USER_TABLES {
+            tx.execute(&format!("DELETE FROM {table}"), [])
+                .map_err(|e| AppError::Database(format!("清空 {table} 失败: {e}")))?;
+        }
+
+        // proxy_config 清空后按 seed 重新插入默认行（enabled/proxy_enabled/
+        // auto_failover_enabled 等走列默认值 0）
+        tx.execute("DELETE FROM proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for (app, retries, fb, idle, cb_f, cb_s, cb_t, cb_r, cb_m) in [
+            ("claude", 6, 90, 180, 8, 3, 90, 0.7, 15),
+            ("codex", 3, 60, 120, 4, 2, 60, 0.6, 10),
+            ("gemini", 5, 60, 120, 4, 2, 60, 0.6, 10),
+            ("grokbuild", 3, 60, 120, 4, 2, 60, 0.6, 10),
+        ] {
+            tx.execute(
+                "INSERT OR IGNORE INTO proxy_config (
+                    app_type, max_retries,
+                    streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                    circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                    circuit_error_rate_threshold, circuit_min_requests
+                ) VALUES (?1, ?2, ?3, ?4, 600, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![app, retries, fb, idle, cb_f, cb_s, cb_t, cb_r, cb_m],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        tx.commit()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        log::info!("已清空全部用户配置数据（恢复出厂）");
+        Ok(())
+    }
 }

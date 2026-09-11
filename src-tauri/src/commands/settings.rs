@@ -3,6 +3,8 @@
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::store::AppState;
+
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
 #[derive(Clone, serde::Serialize)]
 struct UpdateDownloadProgress {
@@ -187,6 +189,50 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
         app.restart();
     });
     Ok(true)
+}
+
+/// 恢复出厂：停代理并还原 Live 配置 → 备份数据库 → 清空用户数据 → 重置
+/// 设置文件 → 重启应用。前端必须在调用前完成用户二次确认；命令成功返回
+/// 后应用会自动重启（重启前前端不应再发起其他请求）。
+#[tauri::command]
+pub async fn factory_reset(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // 1. 停止代理并还原所有被接管的 Live 配置（claude/codex/gemini/grokbuild
+    //    的 settings.json 等恢复为接管前内容，避免 CLI 残留指向已删除的代理）。
+    //    失败不中断：清理流程应继续走完。
+    if let Err(e) = state.proxy_service.stop_with_restore().await {
+        log::warn!("恢复出厂：停止代理/还原 Live 配置失败（继续清理）: {e}");
+    }
+
+    // 2. 备份数据库到 backups 目录（恢复出厂后仍可从备份找回数据）
+    let db = state.db.clone();
+    let backup = tauri::async_runtime::spawn_blocking(move || db.backup_database_file())
+        .await
+        .map_err(|e| format!("备份任务执行失败: {e}"))?
+        .map_err(|e| format!("创建恢复出厂备份失败: {e}"))?;
+    if let Some(path) = backup {
+        log::info!("恢复出厂：数据库已备份到 {}", path.display());
+    }
+
+    // 3. 清空数据库用户数据 + 4. 重置 settings.json 为默认值
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        db.factory_reset_user_data()?;
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .map_err(|e| format!("重置设置文件失败: {e}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("清理任务执行失败: {e}"))??;
+
+    // 5. 保存窗口状态并重启（与 restart_app 相同的路径，让新实例加载干净数据）
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        crate::save_window_state_before_exit(&app);
+        crate::cleanup_before_exit(&app).await;
+        app.restart();
+    });
+
+    Ok(())
 }
 
 /// 下载并安装应用更新，然后由后端直接重启应用。
