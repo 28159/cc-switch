@@ -227,14 +227,10 @@ export function ProviderCard({
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
 
-  const { refetch: refetchUsage } = useUsageQuery(
-    provider.id,
-    appId,
-    {
-      enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
-      autoQueryInterval,
-    },
-  );
+  const { refetch: refetchUsage } = useUsageQuery(provider.id, appId, {
+    enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
+    autoQueryInterval,
+  });
 
   // 判断是否是"当前使用中"的供应商
   // - OMO/OMO Slim 供应商：使用 isCurrent
@@ -262,9 +258,7 @@ export function ProviderCard({
   const hasStateHighlight = shouldUseGreen || shouldUseBlue;
 
   // 右键菜单：在鼠标位置弹出操作菜单（自绘，避免依赖全局容器）
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const handleContextMenu = (event: React.MouseEvent) => {
     event.preventDefault();
     const menuWidth = 200;
@@ -290,10 +284,37 @@ export function ProviderCard({
     };
   }, [ctxMenu]);
 
+  // 主点击 = 切换供应商（与右键菜单主动作一致）。
+  // OMO 当前项 / 累加模式（添加即切换的成员关系）保留「固定用量条」，
+  // 避免误点触发移除或停用；故障转移模式下主点击 = 加入/移除队列。
+  const handleCardClick = () => {
+    if (isAnyOmo) {
+      if (!isCurrent) {
+        onSwitch(provider);
+      } else {
+        onShowUsage?.(provider.id);
+      }
+      return;
+    }
+    if (isAdditiveMode) {
+      onShowUsage?.(provider.id);
+      return;
+    }
+    if (isAutoFailoverEnabled && onToggleFailover) {
+      onToggleFailover(!isInFailoverQueue);
+      return;
+    }
+    if (!isCurrent) {
+      onSwitch(provider);
+    } else {
+      onShowUsage?.(provider.id);
+    }
+  };
+
   return (
     <div
       onContextMenu={handleContextMenu}
-      onClick={onShowUsage ? () => onShowUsage(provider.id) : undefined}
+      onClick={handleCardClick}
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-2.5 transition-all duration-300",
         "bg-card text-card-foreground group cursor-pointer",
@@ -520,6 +541,10 @@ export function ProviderCard({
           className="fixed z-[100] rounded-lg border border-zinc-800 bg-[#161b22]/95 shadow-2xl shadow-black/40 backdrop-blur"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onMouseDown={(event) => event.stopPropagation()}
+          // 菜单是卡片 DOM 的子元素：不拦截 click 会冒泡到卡片主点击，
+          // 点「删除」等菜单项时会顺带把该供应商切换为当前项（进而
+          // 触发"当前供应商不可删除"），表现为"删除不了"。
+          onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -548,12 +573,14 @@ export function ProviderCard({
                 : undefined
             }
             onConfigureUsage={
-              (isOfficial && !supportsOfficialSubscription)
+              isOfficial && !supportsOfficialSubscription
                 ? undefined
                 : () => onConfigureUsage(provider)
             }
             onRefreshUsage={
-              usageEnabled && !isOfficial ? () => void refetchUsage() : undefined
+              usageEnabled && !isOfficial
+                ? () => void refetchUsage()
+                : undefined
             }
             onDelete={() => onDelete(provider)}
             onRemoveFromConfig={

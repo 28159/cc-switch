@@ -5128,7 +5128,22 @@ impl ProviderService {
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
-        let should_hot_switch = is_app_taken_over || live_taken_over;
+        // Stale backup guard: a live_backup row only gets deleted in
+        // stop_with_restore; if the app crashed mid-takeover, the row survives
+        // and would force every switch into hot-switch mode against a dead
+        // proxy. When there is a backup but no live placeholder and the proxy
+        // is not running, treat takeover as stale: clear it and fall through to
+        // a normal switch that writes real endpoints back into the live file.
+        let mut should_hot_switch = is_app_taken_over || live_taken_over;
+        let proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+        if is_app_taken_over && !live_taken_over && !proxy_running {
+            log::warn!(
+                "检测到陈旧的 live_backup（{}）且代理未运行，清除备份并按普通切换处理",
+                app_type.as_str()
+            );
+            let _ = futures::executor::block_on(state.db.delete_live_backup(app_type.as_str()));
+            should_hot_switch = false;
+        }
 
         // Block switching to unsupported official providers when proxy takeover
         // is active. Codex official account cards use native auth passthrough.
