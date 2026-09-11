@@ -261,6 +261,17 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 - 浏览、搜索和恢复支持的会话来源
 - **工作区编辑器**（OpenClaw）— 编辑 Agent 文件（AGENTS.md、SOUL.md 等），支持 Markdown 预览
 
+### 终端工作台
+
+首页同时是一个三栏式终端工作台（项目树 + 终端列表 | 内嵌终端 | 供应商列表）：
+
+- **项目** — 保存项目（工具绑定 + Claude Code 的 MCP / Skills / CLAUDE.md 快照），一键恢复；右键项目可编辑 / 删除
+- **终端实例** — 按项目创建终端实例（Claude Code、Codex、OpenCode、Gemini、OpenClaw、Hermes、Pi、纯 shell 或自定义命令）；可在系统原生终端（Windows Terminal / cmd / PowerShell 等）中打开，也可在面板内使用内嵌 xterm.js 终端
+- **恢复历史会话** — 一键列出并恢复 Claude Code（`claude --resume <id>`）和 OpenCode（`opencode --session <id>`）的对话历史
+- **Git 更改面板** — 实时列出工作区变更，点击任意文件即可查看差异或直接编辑
+- **实时统计** — 终端头部显示实时输出速率、上下文长度与会话 Token 用量
+- **HUD 悬浮窗** — 屏幕角落的置顶精简终端小窗，主窗口最小化时仍可使用
+
 ### 系统与平台
 
 - **云同步** — 自定义配置目录（Dropbox、OneDrive、iCloud、坚果云、NAS）及 WebDAV 服务器同步

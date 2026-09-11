@@ -260,6 +260,17 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 - Browse, search, and restore conversation history across supported session sources
 - **Workspace editor** (OpenClaw) — Edit agent files (AGENTS.md, SOUL.md, etc.) with Markdown preview
 
+### Terminal Workbench
+
+The home page also serves as a three-column terminal workbench (project tree + terminal list | embedded terminal | provider list):
+
+- **Projects** — Save a project (tool bindings + Claude Code MCP / Skills / CLAUDE.md snapshot) and restore it with one click; right-click a project to edit or delete
+- **Terminal instances** — Create per-project terminals for Claude Code, Codex, OpenCode, Gemini, OpenClaw, Hermes, Pi, a plain shell, or a custom command; launch them in your native terminal (Windows Terminal / cmd / PowerShell, etc.) or use the embedded xterm.js terminal in the panel
+- **Resume previous sessions** — List and restore Claude Code (`claude --resume <id>`) and OpenCode (`opencode --session <id>`) conversation history with one click
+- **Git changes panel** — Live list of working-tree changes; click any file to view its diff or edit it
+- **Live stats** — Real-time output rate, context length, and session token usage in the terminal header
+- **HUD floating window** — A compact always-on-top terminal in the screen corner, still usable while the main window is minimized
+
 ### System & Platform
 
 - **Cloud sync** — Custom config directory (Dropbox, OneDrive, iCloud, NAS) and WebDAV server sync
