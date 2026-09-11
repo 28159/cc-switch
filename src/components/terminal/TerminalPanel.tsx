@@ -25,6 +25,8 @@ import {
   History,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Gauge,
   Play,
   Maximize2,
@@ -233,6 +235,18 @@ function formatDuration(ms: number): string {
   return `${minutes}m${String(Math.round(secs % 60)).padStart(2, "0")}s`;
 }
 
+/** 速率展示：<100 保留 1 位小数，≥100 取整，避免高位数字过宽导致抖动 */
+function formatSpeed(v: number): string {
+  return v >= 100 ? v.toFixed(0) : v.toFixed(1);
+}
+
+/** 模型名展示：去掉日期/快照后缀（如 -20250101），太长时从中间截断 */
+function formatModelName(model: string): string {
+  const trimmed = model.replace(/-\d{6,8}$/i, "");
+  if (trimmed.length <= 24) return trimmed;
+  return `${trimmed.slice(0, 14)}…${trimmed.slice(-8)}`;
+}
+
 /** git status 字母标记 → 状态色 */
 function gitStatusColor(raw: string): string {
   if (raw.startsWith("??")) return "text-emerald-500";
@@ -301,6 +315,8 @@ const COLLAPSED_LEFT_WIDTH = 32;
 const RIGHT_WIDTH = 380;
 /** 左栏折叠状态持久化 key */
 const LEFT_COLLAPSED_KEY = "cc-switch-terminal-left-collapsed";
+/** 右栏折叠状态持久化 key */
+const RIGHT_COLLAPSED_KEY = "cc-switch-terminal-right-collapsed";
 /** 选中终端持久化 key */
 const SELECTED_STORAGE_KEY = "cc-switch-terminal-selected";
 /** 选中项目持久化 key */
@@ -353,6 +369,23 @@ export function TerminalPanel({
       // 忽略
     }
   }, [leftCollapsed]);
+  const [rightCollapsed, setRightCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem(RIGHT_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        RIGHT_COLLAPSED_KEY,
+        rightCollapsed ? "1" : "0",
+      );
+    } catch {
+      // 忽略
+    }
+  }, [rightCollapsed]);
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     try {
       return window.localStorage.getItem(SELECTED_STORAGE_KEY);
@@ -1290,22 +1323,36 @@ export function TerminalPanel({
               : t("terminalHub.statsIdle")
           }
         >
-          <Gauge className="h-3 w-3 text-emerald-500/80" />
+          <Gauge className="h-3 w-3 shrink-0 text-emerald-500/80" />
+          {/* 当前/最近模型（tooltip 中有完整信息，这里只放短名） */}
+          {modelRate?.lastModel && (
+            <>
+              <span
+                className="max-w-[11rem] truncate font-medium text-foreground/80"
+                title={modelRate.lastModel}
+              >
+                {formatModelName(modelRate.lastModel)}
+              </span>
+              <span className="h-2.5 w-px shrink-0 bg-border" />
+            </>
+          )}
           {modelRate?.generating ? (
-            <span className="inline-flex items-center gap-1 text-amber-500">
+            <span className="inline-flex shrink-0 items-center gap-1 text-amber-500">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
               {t("terminalHub.statsLiveSpeed", {
-                speed: modelRate.liveSpeedTokS.toFixed(0),
+                speed: formatSpeed(modelRate.liveSpeedTokS),
                 defaultValue: "~{{speed}} tok/s",
               })}
             </span>
           ) : modelRate && modelRate.lastDurationMs > 0 ? (
-            t("terminalHub.statsSpeed", {
-              speed: modelRate.lastSpeedTokS.toFixed(1),
-              defaultValue: "上次 {{speed}} tok/s",
-            })
+            <span className="shrink-0">
+              {t("terminalHub.statsSpeed", {
+                speed: formatSpeed(modelRate.lastSpeedTokS),
+                defaultValue: "上次 {{speed}} tok/s",
+              })}
+            </span>
           ) : (
-            "-- tok/s"
+            <span className="shrink-0">-- tok/s</span>
           )}
           {modelRate && modelRate.lastInputTokens > 0 && (
             <>
@@ -1473,15 +1520,51 @@ export function TerminalPanel({
       <div className="flex h-full w-full overflow-hidden bg-background text-foreground">
         {renderLeftPanel()}
         {renderTerminalArea()}
-        {/* 右栏：模型列表（供应商列表） */}
-        {rightPanel && (
-          <div
-            className="flex shrink-0 flex-col border-l border-border bg-background"
-            style={{ width: RIGHT_WIDTH }}
-          >
-            {rightPanel}
-          </div>
-        )}
+        {/* 右栏：模型列表（供应商列表）；支持折叠为窄条（与左栏一致） */}
+        {rightPanel &&
+          (rightCollapsed ? (
+            <div
+              className="flex shrink-0 flex-col items-center border-l border-border bg-background py-2"
+              style={{ width: COLLAPSED_LEFT_WIDTH }}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                onClick={() => setRightCollapsed(false)}
+                title={t("terminalHub.expandRight", {
+                  defaultValue: "展开模型列表",
+                })}
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </Button>
+              <span
+                className="mt-2 text-[10px] font-medium text-muted-foreground"
+                style={{ writingMode: "vertical-rl" }}
+              >
+                {t("provider.title", { defaultValue: "模型列表" })}
+              </span>
+            </div>
+          ) : (
+            <div
+              className="group/right relative flex shrink-0 flex-col border-l border-border bg-background"
+              style={{ width: RIGHT_WIDTH }}
+            >
+              {/* 折叠按钮：hover 显现，避免遮挡顶行的用量信息 */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1.5 top-1.5 z-10 h-6 w-6 opacity-0 transition-opacity group-hover/right:opacity-100 text-muted-foreground hover:text-foreground"
+                onClick={() => setRightCollapsed(true)}
+                title={t("terminalHub.collapseRight", {
+                  defaultValue: "折叠模型列表",
+                })}
+              >
+                <PanelRightClose className="h-3 w-3" />
+              </Button>
+              {rightPanel}
+            </div>
+          ))}
       </div>
 
       {contextMenu &&

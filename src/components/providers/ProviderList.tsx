@@ -211,7 +211,7 @@ export function ProviderList({
   const currentUsageProvider =
     providers[currentProviderId] ?? Object.values(providers)[0] ?? null;
   const usageBarProvider = usagePinnedProviderId
-    ? providers[usagePinnedProviderId] ?? currentUsageProvider
+    ? (providers[usagePinnedProviderId] ?? currentUsageProvider)
     : currentUsageProvider;
 
   const handleShowUsage = useCallback((providerId: string) => {
@@ -548,11 +548,8 @@ export function ProviderList({
 
   return (
     <div className="flex h-full w-full flex-col">
-      {/* 标题行：模型列表 + 用量（默认当前使用模型；点击卡片临时切换 3 秒） */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <span className="text-sm font-semibold">
-          {t("provider.title", { defaultValue: "模型列表" })}
-        </span>
+      {/* 顶行：用量（默认当前使用模型；点击卡片临时切换 3 秒），标题由右栏折叠按钮承担 */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-border py-2 pl-3 pr-8">
         {usageBarProvider && (
           <div className="ml-auto flex min-w-0 items-center gap-2">
             <span

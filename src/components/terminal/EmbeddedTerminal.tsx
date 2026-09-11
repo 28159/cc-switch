@@ -211,6 +211,30 @@ export function EmbeddedTerminal({
     });
     disposables.push(() => onScrollDisposable.dispose());
 
+    // 备用缓冲区滚轮桥接（alternate-scroll）：opencode 等全屏 TUI 运行在
+    // 备用缓冲区，没有回滚可滚；当应用未启用鼠标追踪时，把滚轮翻译成
+    // 方向键写入 PTY（与 Windows Terminal 的默认行为一致）。
+    // 返回 false 让 xterm 跳过自身处理；普通缓冲区与鼠标感知 TUI 不受影响。
+    term.attachCustomWheelEventHandler((ev) => {
+      if (term.buffer.active.type !== "alternate") return true;
+      if (term.modes.mouseTrackingMode !== "none") return true;
+      ev.preventDefault();
+      // deltaMode 1 = 行；否则按像素（约 40px 一行）折算，单次 1~8 行
+      const delta = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
+      const lines = Math.max(
+        1,
+        Math.min(8, Math.round(Math.abs(delta) / 40) || 1),
+      );
+      // DECCKM（应用光标键模式）开启时用 SS3 序列
+      const cc = term.modes.applicationCursorKeysMode ? "O" : "[";
+      const seq = (delta < 0 ? `\x1b${cc}A` : `\x1b${cc}B`).repeat(lines);
+      const ptyId = ptyIdRef.current;
+      if (ptyId !== null) {
+        void terminalApi.writeEmbedded(ptyId, seq);
+      }
+      return false;
+    });
+
     setBootError(null);
     reportExit(false);
     try {
@@ -289,6 +313,11 @@ export function EmbeddedTerminal({
       cancelled = true;
       bootGenRef.current += 1;
       cleanup?.();
+      // 切换实例时同步清空 pty 关联：底部输入框（TerminalPrompt）读的是
+      // 这个 ref，不清空会继续写到上一个会话；新会话连接成功后由
+      // reportPty 恢复。不调用 reportPty(null)——后台会话仍然存活，
+      // 不能误报 detached 状态。
+      ptyIdRef.current = null;
       // 清理本实例的 xterm DOM；会话保留在后台继续运行（重连即可恢复）
       if (termRef.current) {
         try {
