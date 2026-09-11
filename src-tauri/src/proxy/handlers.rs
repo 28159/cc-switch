@@ -2816,7 +2816,7 @@ async fn log_usage(
     session_id: Option<String>,
 ) {
     // 实时速率采样（latency_ms 为该请求真实耗时，供速率分母使用）
-    super::usage::rate::record_output(&usage, latency_ms);
+    super::usage::rate::record_output(&usage, latency_ms, model);
 
     use super::usage::logger::UsageLogger;
 

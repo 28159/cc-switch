@@ -499,12 +499,16 @@ pub(crate) fn create_usage_collector(
             if let Some(usage) = stream_parser(&events) {
                 // 实时速率采样：独立于日志开关（终端实时速率始终可用）；
                 // 耗时用真实请求时长，避免整段输出压进一个时间点
-                super::usage::rate::record_output(&usage, start_time.elapsed().as_millis() as u64);
+                let model = model_extractor(&events, &fallback_model);
+                super::usage::rate::record_output(
+                    &usage,
+                    start_time.elapsed().as_millis() as u64,
+                    &model,
+                );
                 if !logging_enabled {
                     return;
                 }
 
-                let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
                 let state = state.clone();
@@ -575,7 +579,7 @@ fn spawn_log_usage(
     is_streaming: bool,
 ) {
     // 实时速率采样：独立于日志开关（与流式路径一致，每请求只采样一次）
-    super::usage::rate::record_output(&usage, ctx.latency_ms());
+    super::usage::rate::record_output(&usage, ctx.latency_ms(), model);
 
     // Check enable_logging before spawning the log task
     if let Ok(config) = state.config.try_read() {

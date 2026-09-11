@@ -91,10 +91,18 @@ pub fn record_live_delta(event: &serde_json::Value) {
     if chars == 0 {
         return;
     }
+    let now = now_ms();
+    // swap 出上一次增量的时间：若间隔超过 GENERATING_IDLE_MS，说明旧流已死
+    // （可能未走到 record_output 就断流），本次增量视为新突发的开始，
+    // 避免残留计数把下一次生成的实时速率拖低
+    let prev_at = LIVE_LAST_AT.swap(now, Ordering::Relaxed);
+    let burst_expired = prev_at > 0 && now.saturating_sub(prev_at) > GENERATING_IDLE_MS;
     LIVE_OUTPUT_CHARS.fetch_add(chars as u64, Ordering::Relaxed);
-    LIVE_LAST_AT.store(now_ms(), Ordering::Relaxed);
     let mut start = LIVE_BURST_START.lock().unwrap();
-    if start.is_none() {
+    if start.is_none() || burst_expired {
+        if burst_expired {
+            LIVE_OUTPUT_CHARS.store(chars as u64, Ordering::Relaxed);
+        }
         *start = Some(Instant::now());
     }
 }
@@ -103,7 +111,15 @@ pub fn record_live_delta(event: &serde_json::Value) {
 ///
 /// `duration_ms` 为该请求从发出到收到完整响应的耗时：速率分母按真实
 /// 流式时长计算，而不是把整段输出压进一个时间点。
-pub fn record_output(usage: &TokenUsage, duration_ms: u64) {
+///
+/// `model` 为实际发往上游的模型名（映射后的真值），用于「上次请求」展示。
+pub fn record_output(usage: &TokenUsage, duration_ms: u64, model: &str) {
+    // 模型名先于任何提前返回写入：即使 0 输出也更新「上次请求」展示
+    *LAST_MODEL.lock().unwrap() = if model.is_empty() {
+        None
+    } else {
+        Some(model.to_string())
+    };
     let total = usage.input_tokens as u64
         + usage.output_tokens as u64
         + usage.cache_read_tokens as u64
